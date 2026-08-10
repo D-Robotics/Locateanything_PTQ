@@ -1,0 +1,20 @@
+# Standalone PTQ validation Console configuration.
+# Paths are resolved from the directory where the Console is started.
+inference:
+  model_directory: inference/models
+  tokenizer_directory: ""
+  vision_model: LocateAnything-3B_vision.hbm
+  language_model: LocateAnything-3B_language.hbm
+  embeddings: LocateAnything-3B_embed_tokens.bin
+
+  generation_mode: hybrid
+  max_new_tokens: 4096
+  nms_iou: 0.9
+
+  # S600 BPU L2 partition, applied before Vision and Language initialize.
+  vision_backend_mask: 15
+  language_backend_mask: 15
+  l2m_sizes: "6:6:6:6"
+
+  # Console presentation output. The TROS node never uses this for ROS frames.
+  output_directory: inference/outputs
