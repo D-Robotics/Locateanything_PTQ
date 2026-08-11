@@ -40,7 +40,6 @@ except ImportError:
     QuantStub = None
 
 from .blocks.text_block_leap import LocateAnythingDecoderLayer
-from .sampler import PBD_ROWS, VOCAB_SIZE, build_pbd_sampler
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +47,13 @@ from .sampler import PBD_ROWS, VOCAB_SIZE, build_pbd_sampler
 # ---------------------------------------------------------------------------
 class LocateAnythingRotaryEmbedding(nn.Module):
     def __init__(self, config):
+        """
+        Function:
+            Precompute the 1D rotary-embedding frequency basis.
+
+        Args:
+            config: Language configuration containing rope parameters.
+        """
         super().__init__()
         self.config = config
         self.dim = config.hidden_size // config.num_attention_heads
@@ -85,15 +91,20 @@ class LocateAnythingTextModel(Model):
     """
 
     def __init__(self, config, use_plugin: bool = False) -> None:
+        """
+        Function:
+            Construct the static Language decoder and Host-sampling head.
+
+        Args:
+            config: LocateAnything text configuration.
+            use_plugin: Enable optional quantization plugin stubs.
+        """
         super().__init__()
         self.vocab_size = config.vocab_size
         self.hidden_size = config.hidden_size
         self.use_plugin = use_plugin
         self.tie_word_embeddings = getattr(config, "tie_word_embeddings", True)
         self.config = config
-        # The export driver sets this for one graph at a time.  Keeping the
-        # contract here avoids duplicating stage-specific slicing in wrappers.
-        self._export_stage: str | None = None
 
         self.embed_tokens = Embedding(config.vocab_size, config.hidden_size)
         self.norm = RMSNorm(
@@ -144,54 +155,48 @@ class LocateAnythingTextModel(Model):
         self.dequant = DeQuantStub()
 
     def get_input_embeddings(self):
+        """
+        Function:
+            Return the token embedding module.
+
+        Args:
+            None.
+
+        Returns:
+            Token embedding module.
+        """
         return self.embed_tokens
 
     def tie_lm_head_to_embeddings(self) -> None:
-        """Copy embed_tokens.weight into lm_head.weight for tied case.
+        """
+        Function:
+            Copy loaded token embeddings into the tied LM head.
 
-        Must be called AFTER load_state_dict so the checkpoint's embed
-        weights are what get replicated.
+        Args:
+            None. The checkpoint must already be loaded.
         """
         if not self.tie_word_embeddings:
             return
         with torch.no_grad():
             self.lm_head.weight.data.copy_(self.embed_tokens.weight.data)
 
-    def set_export_stage(self, stage: str | None) -> None:
-        """Select the static output contract used by the next BC export."""
-        self._export_stage = stage
-
-    def _export_output_range(self, num_tokens: int) -> tuple[int, int]:
-        """Return the hidden-state rows that require a vocabulary projection."""
-        stage = self._export_stage or ""
-        if stage == "prefill":
-            return num_tokens - 1, num_tokens
-        if stage.startswith("decode_pbd_q"):
-            return num_tokens - self.config.block_size, num_tokens
-        if stage.startswith("decode_ar_q"):
-            return num_tokens - 1, num_tokens
-        return 0, num_tokens
-
-    def _export_cache_rows(self, cache: list, num_tokens: int) -> list:
-        """Drop PBD MASK rows that are never committed to the KV cache."""
-        stage = self._export_stage or ""
-        if not stage.startswith("decode_pbd_q"):
-            return cache
-        prefix_len = int(stage.rsplit("q", 1)[1]) - self.config.block_size
-        if prefix_len <= 0:
-            return cache
-        head_dim = self.hidden_size // self.config.num_attention_heads
-        num_kv = self.config.num_key_value_heads
-        end = [1, prefix_len, num_kv, head_dim]
-        return [
-            leap.slice(value, [0, 0, 0, 0], end, [1, 1, 1, 1])
-            for value in cache
-        ]
-
     # ------------------------------------------------------------------
     # leap DSL build() — 1D rope only.
     # ------------------------------------------------------------------
     def build(self, inputs_embeds, position_ids, attention_mask, *caches):
+        """
+        Function:
+            Build one static Language graph with full Host logits and KV rows.
+
+        Args:
+            inputs_embeds: Embedded query tokens.
+            position_ids: One-dimensional position indices.
+            attention_mask: Host-constructed attention mask.
+            caches: Per-layer key and value cache tensors.
+
+        Returns:
+            Logits followed by updated key/value caches.
+        """
         bs, _, num_tokens = position_ids.type.shape
         # position_ids: (bs, 1, seq) — gather cos/sin at those positions.
         if bs > 1:
@@ -217,10 +222,9 @@ class LocateAnythingTextModel(Model):
         hidden_states = inputs_embeds
         position_embeddings = (cos, sin)
 
-        n = self.config.num_hidden_layers
+        n = len(caches) // 2
         cache_keys = caches[:n]
-        cache_values = caches[n:2 * n]
-        sampling_inputs = caches[2 * n:]
+        cache_values = caches[n:]
         new_keys = []
         new_values = []
         for idx, layer in enumerate(self.layers):
@@ -235,45 +239,38 @@ class LocateAnythingTextModel(Model):
             new_values.append(nv)
 
         hidden_states = self.norm(hidden_states)
-        start, end = self._export_output_range(num_tokens)
-        if start < 0 or end > num_tokens or start >= end:
-            raise ValueError(
-                f"invalid {self._export_stage!r} output range "
-                f"[{start}, {end}) for q_len={num_tokens}"
-            )
-        if start != 0 or end != num_tokens:
+        if (
+            getattr(self.config, "prefill_last_token_only", True)
+            and num_tokens == self.config.prefill_seq_len
+        ):
             hidden_states = leap.slice(
                 hidden_states,
-                [0, start, 0],
-                [bs, end, self.hidden_size],
+                [0, num_tokens - 1, 0],
+                [bs, num_tokens, self.hidden_size],
                 [1, 1, 1],
             )
         logits = self.lm_head(hidden_states)
         logits = self.dequant(logits)
-        new_keys = self._export_cache_rows(new_keys, num_tokens)
-        new_values = self._export_cache_rows(new_values, num_tokens)
-        stage = self._export_stage or ""
-        use_bpu_sampling = (
-            getattr(self.config, "sampling_backend", "bpu") == "bpu"
-            and (stage == "decode" or stage.startswith("decode_pbd_q"))
-        )
-        if not use_bpu_sampling:
-            return (logits, *new_keys, *new_values)
-        if len(sampling_inputs) != 2:
-            raise ValueError(f"{stage} requires history mask and random values")
-        compact = build_pbd_sampler(
-            logits, sampling_inputs[0], sampling_inputs[1],
-            temperature=self.config.sampling_temperature,
-            top_p=self.config.sampling_top_p,
-            repetition_penalty=self.config.sampling_repetition_penalty,
-        )
-        return (*compact, *new_keys, *new_values)
+        return (logits, *new_keys, *new_values)
 
     # ------------------------------------------------------------------
     # PyTorch forward — for calibration passes.
     # Same signature as build() but uses eager torch ops.
     # ------------------------------------------------------------------
     def forward(self, inputs_embeds, position_ids, attention_mask, *caches):
+        """
+        Function:
+            Run the eager Language stack for calibration.
+
+        Args:
+            inputs_embeds: Embedded query tokens.
+            position_ids: One-dimensional position indices.
+            attention_mask: Host-constructed attention mask.
+            caches: Per-layer key and value cache tensors.
+
+        Returns:
+            Logits and updated cache tensors.
+        """
         bs, _, num_tokens = position_ids.shape
         # 1D rope gather
         flat_pos = position_ids.view(bs, num_tokens)               # (bs, seq)
@@ -309,6 +306,19 @@ class LocateAnythingTextModel(Model):
     def get_leap_input_types_text_model(
         self, num_layers: int, seq_len: int, cache_len: int, batch_size: int = 1,
     ) -> List[leap.TensorType]:
+        """
+        Function:
+            Describe static Prefill graph input tensors.
+
+        Args:
+            num_layers: Number of decoder layers.
+            seq_len: Query sequence length.
+            cache_len: KV cache capacity.
+            batch_size: Static batch size.
+
+        Returns:
+            Leap tensor descriptors.
+        """
         bs = max(batch_size, 1)
         types: List[leap.TensorType] = []
         types.append(leap.TensorType([bs, seq_len, self.hidden_size], leap.float16))
@@ -325,16 +335,21 @@ class LocateAnythingTextModel(Model):
 
     def get_leap_input_types_decode_model(
         self, num_layers: int, seq_len: int, cache_len: int, batch_size: int = 1,
-        *, pbd: bool = False,
     ) -> List[leap.TensorType]:
+        """
+        Function:
+            Describe static decode graph input tensors.
+
+        Args:
+            num_layers: Number of decoder layers.
+            seq_len: Decode query length.
+            cache_len: KV cache capacity.
+            batch_size: Static batch size.
+
+        Returns:
+            Leap tensor descriptors.
+        """
         # Same as text_model but seq_len is decode_seq_len (default 6 for PBD).
-        inputs = self.get_leap_input_types_text_model(
+        return self.get_leap_input_types_text_model(
             num_layers, seq_len, cache_len, batch_size,
         )
-        if pbd and getattr(self.config, "sampling_backend", "bpu") == "bpu":
-            inputs.extend([
-                # HBDK4 lowers this binary history mask to signed int8.
-                leap.TensorType([1, PBD_ROWS, VOCAB_SIZE], leap.int8),
-                leap.TensorType([1, PBD_ROWS, 1], leap.float16),
-            ])
-        return inputs

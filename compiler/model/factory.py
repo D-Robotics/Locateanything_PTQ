@@ -4,7 +4,28 @@ _model_builders = {}
 
 
 def register_model(name, marches=None):
+    """
+    Function:
+        Register a model builder for the supported compiler marches.
+
+    Args:
+        name: Public model name.
+        marches: Supported target architectures.
+
+    Returns:
+        A decorator that records the builder function.
+    """
     def decorator(func):
+        """
+        Function:
+            Store one model builder in the registry.
+
+        Args:
+            func: Builder callable.
+
+        Returns:
+            The unchanged builder callable.
+        """
         _model_builders[name] = {"builder": func, "marches": marches or []}
         return func
 
@@ -12,14 +33,44 @@ def register_model(name, marches=None):
 
 
 def get_supported_models():
+    """
+    Function:
+        Return registered model names.
+
+    Args:
+        None.
+
+    Returns:
+        List of public model names.
+    """
     return list(_model_builders)
 
 
 def get_marches_with_model(model_name: str) -> list[str]:
+    """
+    Function:
+        Return target marches registered for one model.
+
+    Args:
+        model_name: Public model name.
+
+    Returns:
+        Supported march names, or an empty list.
+    """
     return _model_builders.get(model_name, {}).get("marches", [])
 
 
 def get_supported_marches():
+    """
+    Function:
+        Return all target marches supported by the registry.
+
+    Args:
+        None.
+
+    Returns:
+        Sorted list of march names.
+    """
     return sorted(
         {
             march
@@ -29,6 +80,17 @@ def get_supported_marches():
     )
 
 def create_model_api(model_name, args):
+    """
+    Function:
+        Create the selected model compiler API from parsed arguments.
+
+    Args:
+        model_name: Registered model name.
+        args: Compiler argument namespace.
+
+    Returns:
+        Model API instance, or ``None`` for an unsupported selection.
+    """
     model_info = _model_builders.get(model_name)
     if model_info is None:
         print(f"Model '{model_name}' is not supported.")
@@ -43,11 +105,31 @@ def create_model_api(model_name, args):
 
 
 def _primary_device(args):
+    """
+    Function:
+        Select the first device from a parsed device argument.
+
+    Args:
+        args: Compiler argument namespace.
+
+    Returns:
+        One device string.
+    """
     return args.device[0] if isinstance(args.device, list) else args.device
 
 
 @register_model("locateanything-lm-3b", ["nash-p"])
 def _build_locateanything_lm_3b(args):
+    """
+    Function:
+        Construct the LocateAnything Language compiler API.
+
+    Args:
+        args: Parsed Language compiler arguments.
+
+    Returns:
+        Configured LocateAnythingLanguageApi instance.
+    """
     from model.language import LocateAnythingLanguageApi
 
     return LocateAnythingLanguageApi(
@@ -68,15 +150,21 @@ def _build_locateanything_lm_3b(args):
         apply_hidden_rotation=not args.disable_hidden_rotation,
         export_only=args.export_only,
         calibration_scale_manifest=args.calibration_scale_manifest,
-        sampling_backend=args.sampling_backend,
-        sampling_temperature=args.sampling_temperature,
-        sampling_top_p=args.sampling_top_p,
-        sampling_repetition_penalty=args.sampling_repetition_penalty,
     )
 
 
 @register_model("locateanything-vit-3b", ["nash-p"])
 def _build_locateanything_vit_3b(args):
+    """
+    Function:
+        Construct the LocateAnything Vision compiler API.
+
+    Args:
+        args: Parsed Vision compiler arguments.
+
+    Returns:
+        Configured LocateAnythingVisionApi instance.
+    """
     from model.vision import LocateAnythingVisionApi
 
     return LocateAnythingVisionApi(

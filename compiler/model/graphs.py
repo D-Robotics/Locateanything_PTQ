@@ -22,12 +22,32 @@ CALIBRATION_STAGES = (
 
 
 def calibration_execution_counts(context_count: int) -> dict[str, int]:
+    """
+    Function:
+        Build expected calibration counts for every stable graph stage.
+
+    Args:
+        context_count: Number of language contexts in the calibration set.
+
+    Returns:
+        Mapping from calibration stage to expected execution count.
+    """
     if context_count < 0:
         raise ValueError("context_count must be non-negative")
     return {stage: context_count for stage in CALIBRATION_STAGES}
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Function:
+        Print the public Language graph catalog.
+
+    Args:
+        argv: Optional command-line argument list.
+
+    Returns:
+        Process exit status.
+    """
     parser = argparse.ArgumentParser(description="Print the LocateAnything Language graph catalog")
     parser.add_argument("--field", choices=("graphs", "calibration-stages"), default="graphs")
     args = parser.parse_args(argv)

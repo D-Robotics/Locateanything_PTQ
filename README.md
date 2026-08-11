@@ -44,10 +44,15 @@ single Python entry point:
 
 ```bash
 python -m pip install -r compiler/requirements-host.txt
-python compiler/quantize.py prepare --config compiler/config/quantization.yaml
-python compiler/quantize.py calibrate --config compiler/config/quantization.yaml --component all
-python compiler/quantize.py build --config compiler/config/quantization.yaml \
-  --component all --target hbm
+python compiler/quantize.py \
+  --config compiler/config/quantization.yaml \
+  prepare
+python compiler/quantize.py \
+  --config compiler/config/quantization.yaml \
+  calibrate --component all
+python compiler/quantize.py \
+  --config compiler/config/quantization.yaml \
+  build --component all --target hbm
 ```
 
 Use `--resume` only to reuse an existing, explicitly selected output directory;
@@ -56,8 +61,9 @@ help forms are safe for checking a configuration:
 
 ```bash
 python compiler/quantize.py --help
-python compiler/quantize.py build --config compiler/config/quantization.yaml \
-  --component all --target hbm --dry-run
+python compiler/quantize.py \
+  --config compiler/config/quantization.yaml \
+  build --component all --target hbm --dry-run
 ```
 
 ## Standalone Console

@@ -19,6 +19,19 @@ class ConfigurationFileError(ValueError):
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
+    """
+    Function:
+        Load one complete YAML compiler configuration.
+
+    Args:
+        path: Configuration file path.
+
+    Returns:
+        Parsed configuration mapping.
+
+    Raises:
+        ConfigurationFileError: If the file cannot be read or has an invalid root.
+    """
     path = path.resolve()
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))

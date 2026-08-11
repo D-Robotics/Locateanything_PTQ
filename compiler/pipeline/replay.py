@@ -11,6 +11,8 @@ from typing import Any, Iterable, Mapping, NamedTuple
 
 import torch
 
+from model.contract import validate_compiler_profile
+
 
 REQUIRED_TENSOR_FIELDS = {
     "prompt_input_ids",
@@ -1186,9 +1188,13 @@ def apply_scale_manifest(
     manifest_path: Path,
     group: str,
     sample_count: int | None = None,
+    expected_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restore audited activation-scale state before switching to compile mode."""
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    validated_profile: dict[str, Any] = {}
+    if expected_profile:
+        validated_profile = validate_compiler_profile(manifest, expected_profile)
     if sample_count is None:
         sample_count = int(manifest.get("sample_count", 0))
     if sample_count <= 0:
@@ -1281,6 +1287,7 @@ def apply_scale_manifest(
     return {
         "group": group,
         "sample_count": sample_count,
+        "validated_profile": validated_profile,
         "applied_modules": applied,
         "ignored_dynamic_attention_activation_points": len(retired_attention_points),
         # Deprecated compatibility key for existing build consumers.

@@ -21,65 +21,69 @@ from hbdk4.compiler import load, save
 from hbdk4.compiler.hbm import Hbm, Hbo
 
 from model.base import Model
+from model.contract import (
+    language_io_contract,
+    language_output_shapes,
+    language_query_length,
+)
 from model.graphs import LANGUAGE_GRAPHS
 from pipeline.progress import StageProgress, format_status_line  # noqa: E402
 
 
-BASE_EXPECTED = {
-    "decode": ((1, 6, 152681), (1, 6, 2, 128)),
-    "decode_ar": ((1, 1, 152681), (1, 1, 2, 128)),
-}
 KNOWN_STAGES = set(LANGUAGE_GRAPHS)
-VOCAB_SIZE = 152681
-HIDDEN_SIZE = 2048
-NUM_LAYERS = 36
-NUM_KV_HEADS = 2
-HEAD_DIM = 128
-CACHE_TENSOR_COUNT = NUM_LAYERS * 2
 
 
 @dataclass(frozen=True)
 class LanguageContract:
     chunk_size: int
     cache_len: int
-    sampling_backend: str = "bpu"
 
 
 def expected_contract(
     name: str, contract: LanguageContract
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    if name == "prefill":
-        return (1, 1, VOCAB_SIZE), (1, contract.chunk_size, NUM_KV_HEADS, HEAD_DIM)
-    if name in BASE_EXPECTED:
-        return BASE_EXPECTED[name]
-    prefix, value = name.rsplit("q", 1)
-    q_len = int(value)
-    if prefix not in {"decode_pbd_", "decode_ar_"}:
-        raise ValueError(f"unsupported Language graph: {name}")
-    if prefix == "decode_pbd_":
-        # The prefix rows are the only PBD KV rows committed by the host;
-        # the six MASK/speculative rows are transient.
-        return (1, 6, VOCAB_SIZE), (1, q_len - 6, NUM_KV_HEADS, HEAD_DIM)
-    if prefix == "decode_ar_":
-        # AR bridge graphs commit every accepted token, but only the final
-        # hidden state is needed for the next vocabulary decision.
-        return (1, 1, VOCAB_SIZE), (1, q_len, NUM_KV_HEADS, HEAD_DIM)
-    raise ValueError(f"unsupported Language graph: {name}")
+    """
+    Function:
+        Return the expected logits and KV update shapes for a graph.
+
+    Args:
+        name: Stable Language graph name.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        Logits and per-layer KV update shapes.
+    """
+    return language_output_shapes(name, contract.chunk_size)
 
 
 def query_length(name: str, contract: LanguageContract) -> int:
-    if name == "prefill":
-        return contract.chunk_size
-    if name == "decode":
-        return 6
-    if name == "decode_ar":
-        return 1
+    """
+    Function:
+        Return the query length of a stable Language graph.
+
+    Args:
+        name: Stable Language graph name.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        Static query length.
+    """
     if name not in KNOWN_STAGES:
         raise ValueError(f"unsupported Language graph: {name}")
-    return int(name.rsplit("q", 1)[1])
+    return language_query_length(name, contract.chunk_size)
 
 
 def graph_label(name: str) -> str:
+    """
+    Function:
+        Format a stable graph name for progress output.
+
+    Args:
+        name: Stable Language graph name.
+
+    Returns:
+        Human-readable graph label.
+    """
     if name == "prefill":
         return "Prefill"
     if name == "decode":
@@ -94,6 +98,16 @@ def graph_label(name: str) -> str:
 
 
 def _canonical_dtype(value: Any) -> str:
+    """
+    Function:
+        Normalize a compiler tensor descriptor dtype.
+
+    Args:
+        value: Compiler tensor descriptor.
+
+    Returns:
+        Canonical dtype name.
+    """
     tensor_type = getattr(value, "type", None)
     raw = getattr(tensor_type, "np_dtype", None)
     if raw is None:
@@ -108,6 +122,16 @@ def _canonical_dtype(value: Any) -> str:
 
 
 def _descriptor_contract(value: Any) -> tuple[tuple[int, ...], str]:
+    """
+    Function:
+        Extract a static shape and dtype from a tensor descriptor.
+
+    Args:
+        value: Compiler tensor descriptor.
+
+    Returns:
+        ``(shape, dtype)`` contract tuple.
+    """
     tensor_type = getattr(value, "type", None)
     shape = tuple(getattr(tensor_type, "shape", ()))
     if not shape or not all(isinstance(axis, int) and axis > 0 for axis in shape):
@@ -121,39 +145,24 @@ def expected_io_contract(
     *,
     cache_dtype: str = "float32",
 ) -> tuple[list[tuple[tuple[int, ...], str]], list[tuple[tuple[int, ...], str]]]:
-    q_len = query_length(name, contract)
-    logits_shape, update_shape = expected_contract(name, contract)
-    cache_shape = (1, contract.cache_len, NUM_KV_HEADS, HEAD_DIM)
-    inputs = [
-        ((1, q_len, HIDDEN_SIZE), "float16"),
-        ((1, 1, q_len), "int32"),
-        ((1, q_len, contract.cache_len), "float16"),
-        *[(cache_shape, cache_dtype) for _ in range(CACHE_TENSOR_COUNT)],
-    ]
-    bpu_sampling = contract.sampling_backend == "bpu" and (
-        name == "decode" or name.startswith("decode_pbd_q")
+    """
+    Function:
+        Return the full stable graph boundary contract.
+
+    Args:
+        name: Stable Language graph name.
+        contract: Chunk/cache dimensions.
+        cache_dtype: Converted graph cache dtype.
+
+    Returns:
+        Input and output descriptor lists.
+    """
+    return language_io_contract(
+        name,
+        contract.chunk_size,
+        contract.cache_len,
+        cache_dtype=cache_dtype,
     )
-    if bpu_sampling:
-        inputs.extend([
-            ((1, 6, VOCAB_SIZE), "int8"),
-            ((1, 6, 1), "float16"),
-        ])
-        outputs = [
-            ((1, 6, 1), "int32"),
-            ((1, 6, 5), "int32"),
-            ((1, 6, 5), "float16"),
-            ((1, 6, 6), "float16"),
-            ((1, 6, 4), "int32"),
-            ((1, 6, 4), "float16"),
-            ((1, 6, 1), "float16"),
-            *[(update_shape, cache_dtype) for _ in range(CACHE_TENSOR_COUNT)],
-        ]
-    else:
-        outputs = [
-            (logits_shape, "float16"),
-            *[(update_shape, cache_dtype) for _ in range(CACHE_TENSOR_COUNT)],
-        ]
-    return inputs, outputs
 
 
 def validate_graph_contract(
@@ -163,6 +172,19 @@ def validate_graph_contract(
     *,
     cache_dtype: str = "float32",
 ) -> None:
+    """
+    Function:
+        Validate one source or converted graph against the stable ABI.
+
+    Args:
+        function: Compiler function descriptor.
+        name: Expected stable graph name.
+        contract: Chunk/cache dimensions.
+        cache_dtype: Expected cache boundary dtype.
+
+    Returns:
+        None.
+    """
     actual_name = str(function.name)
     if actual_name != name:
         raise RuntimeError(
@@ -200,6 +222,16 @@ def validate_graph_contract(
 
 
 def heading(value: str) -> None:
+    """
+    Function:
+        Print a concise compiler stage heading.
+
+    Args:
+        value: Heading text.
+
+    Returns:
+        None.
+    """
     print(f"\n================== {value} ==================", flush=True)
 
 
@@ -207,6 +239,17 @@ def discover_bc(
     bc_dir: Path,
     contract: LanguageContract,
 ) -> dict[str, Path]:
+    """
+    Function:
+        Discover and validate all thirteen source BC graphs.
+
+    Args:
+        bc_dir: Directory containing source BC files.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        Mapping from graph name to source BC path.
+    """
     expected = set(LANGUAGE_GRAPHS)
     discovered: dict[str, Path] = {}
     candidates = [
@@ -230,7 +273,7 @@ def discover_bc(
         discovered[name] = path.resolve()
         print(
             f"[DETAIL] {name}: logits={logits_shape} cache={cache_shape} "
-            f"inputs=75 outputs=73",
+            f"inputs={len(function.inputs)} outputs={len(function.outputs)}",
             flush=True,
         )
         print(
@@ -257,6 +300,18 @@ def discover_bc(
 def valid_function(
     path: Path, expected_name: str, contract: LanguageContract
 ) -> bool:
+    """
+    Function:
+        Check whether a converted BC has the expected graph contract.
+
+    Args:
+        path: Candidate BC path.
+        expected_name: Expected graph name.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        True when the candidate is valid.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -274,6 +329,18 @@ def valid_function(
 
 def convert_stage(source: Path, destination: Path, name: str,
                   march: str, resume: bool, contract: LanguageContract) -> None:
+    """
+    Function:
+        Convert one source BC graph and preserve its stable ABI.
+
+    Args:
+        source: Source BC path.
+        destination: Converted BC path.
+        name: Stable graph name.
+        march: Target compiler march.
+        resume: Reuse a valid converted graph.
+        contract: Chunk/cache dimensions.
+    """
     if resume and valid_function(destination, name, contract):
         print(f"[RESUME] converted {name}: {destination}", flush=True)
         return
@@ -298,6 +365,16 @@ def convert_stage(source: Path, destination: Path, name: str,
 
 
 def valid_hbo(path: Path) -> bool:
+    """
+    Function:
+        Check whether an HBO artifact can be opened.
+
+    Args:
+        path: Candidate HBO path.
+
+    Returns:
+        True when the artifact is readable.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -309,6 +386,17 @@ def valid_hbo(path: Path) -> bool:
 
 def compile_stage(converted_bc: Path, destination: Path, name: str,
                   core_num: int, args: argparse.Namespace) -> None:
+    """
+    Function:
+        Compile one converted graph into an HBO artifact.
+
+    Args:
+        converted_bc: Converted BC path.
+        destination: HBO output path.
+        name: Stable graph name.
+        core_num: BPU core count.
+        args: Language build options and contract.
+    """
     if args.resume and valid_hbo(destination):
         print(f"[RESUME] HBO {name} core={core_num}: {destination}", flush=True)
         return
@@ -346,6 +434,18 @@ def compile_stage(converted_bc: Path, destination: Path, name: str,
 def hbm_contract_matches(
     path: Path, expected_names: list[str], contract: LanguageContract
 ) -> bool:
+    """
+    Function:
+        Validate the graph catalog and ABI of one linked Language HBM.
+
+    Args:
+        path: Candidate HBM path.
+        expected_names: Required graph names.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        True when the HBM matches the stable contract.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -364,12 +464,35 @@ def hbm_contract_matches(
 def valid_hbm(
     path: Path, expected_names: list[str], contract: LanguageContract
 ) -> bool:
+    """
+    Function:
+        Check a linked HBM against the expected graph contract.
+
+    Args:
+        path: Candidate HBM path.
+        expected_names: Required graph names.
+        contract: Chunk/cache dimensions.
+
+    Returns:
+        True when the HBM is valid.
+    """
     return hbm_contract_matches(path, expected_names, contract)
 
 
 def link_variant(hbos: list[Path], destination: Path,
                  resume: bool, expected_names: list[str],
                  contract: LanguageContract) -> None:
+    """
+    Function:
+        Link all graph HBOs into one validated Language HBM.
+
+    Args:
+        hbos: Ordered graph HBO paths.
+        destination: HBM output path.
+        resume: Reuse a valid existing HBM.
+        expected_names: Required graph names.
+        contract: Chunk/cache dimensions.
+    """
     if resume and valid_hbm(destination, expected_names, contract):
         print(f"[RESUME] HBM: {destination}", flush=True)
         return
@@ -389,6 +512,16 @@ def link_variant(hbos: list[Path], destination: Path,
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Function:
+        Parse the standalone Language build options.
+
+    Args:
+        None; options are read from ``sys.argv``.
+
+    Returns:
+        Parsed argument namespace.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--bc_dir", type=Path, required=True)
     parser.add_argument("--output_dir", type=Path, required=True)
@@ -400,14 +533,10 @@ def parse_args() -> argparse.Namespace:
         default=[1, 2, 4],
     )
     parser.add_argument("--jobs", type=int, default=16)
-    parser.add_argument("--chunk-size", type=int, default=768)
+    parser.add_argument("--chunk-size", type=int, default=1024)
     parser.add_argument("--cache-len", type=int, default=4096)
     parser.add_argument("--language-w-bits", type=int, choices=(4, 8), default=8)
     parser.add_argument("--lm-head-w-bits", type=int, choices=(4, 8), default=8)
-    parser.add_argument("--sampling-backend", choices=("host", "bpu"), default="bpu")
-    parser.add_argument("--sampling-temperature", type=float, default=0.7)
-    parser.add_argument("--sampling-top-p", type=float, default=0.9)
-    parser.add_argument("--sampling-repetition-penalty", type=float, default=1.1)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--convert_only", action="store_true")
     parser.add_argument("--check_only", action="store_true")
@@ -421,6 +550,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """
+    Function:
+        Run source validation, conversion, HBO compilation and HBM linking.
+
+    Args:
+        None; options are read from ``sys.argv``.
+
+    Returns:
+        Process exit status.
+    """
     args = parse_args()
     args.bc_dir = args.bc_dir.resolve()
     args.output_dir = args.output_dir.resolve()
@@ -437,9 +576,7 @@ def main() -> int:
         or args.cache_len % 64
     ):
         raise RuntimeError("chunk/cache lengths must be multiples of 64 with cache > chunk")
-    args.contract = LanguageContract(
-        args.chunk_size, args.cache_len, args.sampling_backend
-    )
+    args.contract = LanguageContract(args.chunk_size, args.cache_len)
     if args.hbm_path and len(args.ar_core_nums) != 1:
         raise RuntimeError("--hbm_path requires exactly one --ar_core_nums value")
     args.output_dir.mkdir(parents=True, exist_ok=True)

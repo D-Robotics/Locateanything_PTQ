@@ -72,6 +72,20 @@ def remap_vision_state_dict(raw_sd: dict, num_patches: int, patch_size: int,
 
 def load_vision_state_dict(model_dir: str, num_patches: int, patch_size: int,
                             in_channels: int, hidden_size: int) -> dict:
+    """
+    Function:
+        Load and remap Vision tensors from a checkpoint directory.
+
+    Args:
+        model_dir: LocateAnything checkpoint directory.
+        num_patches: Static patch count for the target image.
+        patch_size: Source patch size.
+        in_channels: Input image channel count.
+        hidden_size: Vision hidden width.
+
+    Returns:
+        State dictionary keyed for the compiler Vision model.
+    """
     idx_path = os.path.join(model_dir, "model.safetensors.index.json")
     if os.path.exists(idx_path):
         with open(idx_path) as f:
@@ -107,6 +121,24 @@ class LocateAnythingVisionApi:
         export_only: bool = False,
         calibration_scale_manifest: Optional[str] = None,
     ) -> None:
+        """
+        Function:
+            Configure the standalone Vision compiler API.
+
+        Args:
+            input_model_path: Float checkpoint directory.
+            output_model_path: Directory for BC/HBO/HBM artifacts.
+            image_width: Static image width.
+            image_height: Static image height.
+            device: Host device used during export preparation.
+            w_bits: Vision weight width.
+            vit_core_num: Vision BPU core list.
+            march: Target compiler march.
+            hidden_rotation_path: Optional hidden-domain rotation file.
+            apply_hidden_rotation: Whether to apply the rotation.
+            export_only: Stop after BC export.
+            calibration_scale_manifest: Optional PTQ scale manifest.
+        """
         self.input_model_path = input_model_path
         self.output_model_path = output_model_path
         self.image_width = image_width
@@ -118,7 +150,7 @@ class LocateAnythingVisionApi:
                 f"got W{w_bits}"
             )
         self.w_bits = w_bits
-        self.vit_core_num = vit_core_num or [1]
+        self.vit_core_num = vit_core_num or [4]
         self.march = march
         self.hidden_rotation_path = hidden_rotation_path
         self.apply_hidden_rotation = apply_hidden_rotation
@@ -205,6 +237,16 @@ class LocateAnythingVisionApi:
             print(f"  hidden rotation     = {source}")
 
     def _validate_weight_policy(self, *, announce: bool = False) -> None:
+        """
+        Function:
+            Verify the fixed Vision W8 linear policy.
+
+        Args:
+            announce: Print the validated policy when true.
+
+        Returns:
+            None.
+        """
         linears = [
             (name, module)
             for name, module in self.model.named_modules()
@@ -293,4 +335,14 @@ class LocateAnythingVisionApi:
         print(f"[LocateAnythingVisionApi] DONE — {self.output_vit_model_path}")
 
     def get_hbm_path(self) -> str:
+        """
+        Function:
+            Return the configured Vision HBM output path.
+
+        Args:
+            None.
+
+        Returns:
+            Vision HBM path.
+        """
         return self.output_vit_model_path

@@ -4,8 +4,6 @@ import argparse
 import os
 from pathlib import Path
 
-import torch
-
 from model.factory import (
     create_model_api,
     get_marches_with_model,
@@ -27,7 +25,27 @@ DEFAULT_COMPILE_KWARGS = {
 
 
 def validated_path(check_exists=True):
+    """
+    Function:
+        Build an argparse validator for an optional filesystem path.
+
+    Args:
+        check_exists: Require the path to exist before accepting it.
+
+    Returns:
+        A validator that expands the user path and returns an absolute path.
+    """
     def validator(path_string):
+        """
+        Function:
+            Validate and normalize one command-line path value.
+
+        Args:
+            path_string: Raw path supplied to argparse.
+
+        Returns:
+            The normalized path as a string.
+        """
         if not path_string:
             raise argparse.ArgumentTypeError("Path cannot be empty")
         path = Path(os.path.expanduser(os.path.expandvars(path_string)))
@@ -39,6 +57,19 @@ def validated_path(check_exists=True):
 
 
 def validate_device(value: str) -> list[str]:
+    """
+    Function:
+        Parse the device list without probing host hardware.
+
+    Args:
+        value: Comma- or whitespace-separated device names such as ``cuda:0``.
+
+    Returns:
+        A de-duplicated list of ``cpu`` or ``cuda:N`` device names.
+
+    Raises:
+        argparse.ArgumentTypeError: If the device syntax is invalid.
+    """
     raw_devices = [item for item in value.replace(",", " ").split() if item]
     if not raw_devices:
         raise argparse.ArgumentTypeError("Device cannot be empty")
@@ -58,13 +89,21 @@ def validate_device(value: str) -> list[str]:
             index = int(value_lower.split(":", 1)[1])
         except ValueError as exc:
             raise argparse.ArgumentTypeError(f"Invalid CUDA device: {raw}") from exc
-        if not torch.cuda.is_available() or index >= torch.cuda.device_count():
-            raise argparse.ArgumentTypeError(f"CUDA device is unavailable: {raw}")
         devices.append(f"cuda:{index}")
     return list(dict.fromkeys(devices))
 
 
 def parse_core_list(value: str) -> list[int]:
+    """
+    Function:
+        Parse a comma-separated list of BPU core counts.
+
+    Args:
+        value: Text such as ``4`` or ``1,2,4``.
+
+    Returns:
+        Parsed integer core counts.
+    """
     try:
         values = [int(item.strip()) for item in value.split(",") if item.strip()]
     except ValueError as exc:
@@ -75,6 +114,16 @@ def parse_core_list(value: str) -> list[int]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Function:
+        Construct the standalone compiler argument parser.
+
+    Args:
+        None.
+
+    Returns:
+        The configured argparse parser.
+    """
     model_help = ", ".join(
         f"{name} ({'/'.join(get_marches_with_model(name))})"
         for name in get_supported_models()
@@ -91,25 +140,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--output_model_path", required=True, type=validated_path(check_exists=False)
     )
     parser.add_argument("--cache_len", type=int, default=4096)
-    parser.add_argument("--chunk_size", type=int, default=256)
+    parser.add_argument("--chunk_size", type=int, default=1024)
     parser.add_argument(
         "--decode_seq_len",
         type=int,
-        default=1,
-        help="Decode query length; use 6 for LocateAnything PBD and 1 for AR.",
+        default=6,
+        help="Decode query length for the LocateAnything PBD contract.",
     )
-    parser.add_argument("--image_width", type=int, default=448)
-    parser.add_argument("--image_height", type=int, default=448)
+    parser.add_argument("--image_width", type=int, default=672)
+    parser.add_argument("--image_height", type=int, default=672)
     parser.add_argument("--device", type=validate_device, default=["cpu"])
     parser.add_argument("--w_bits", type=int, choices=[4, 8], default=8)
     parser.add_argument("--lm_head_w_bits", type=int, choices=[4, 8], default=8)
-    parser.add_argument("--sampling_backend", choices=("host", "bpu"), default="bpu")
-    parser.add_argument("--sampling_temperature", type=float, default=0.7)
-    parser.add_argument("--sampling_top_p", type=float, default=0.9)
-    parser.add_argument("--sampling_repetition_penalty", type=float, default=1.1)
-    parser.add_argument("--vit_core_num", type=parse_core_list, default=[1])
-    parser.add_argument("--prefill_core_num", type=parse_core_list, default=[1])
-    parser.add_argument("--decode_core_num", type=parse_core_list, default=[1])
+    parser.add_argument("--vit_core_num", type=parse_core_list, default=[4])
+    parser.add_argument("--prefill_core_num", type=parse_core_list, default=[4])
+    parser.add_argument("--decode_core_num", type=parse_core_list, default=[4])
     parser.add_argument("--ar_core_num", type=parse_core_list, default=None)
     parser.add_argument("--jobs", type=int, default=16)
     parser.add_argument("--cache_path", type=validated_path(False), default=None)
@@ -123,6 +168,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(parser: argparse.ArgumentParser, args) -> None:
+    """
+    Function:
+        Validate dimensions and fixed LocateAnything build constraints.
+
+    Args:
+        parser: Parser used to report user-facing argument errors.
+        args: Parsed compiler arguments.
+
+    Returns:
+        None. Invalid arguments terminate through ``parser.error``.
+    """
     if not 256 <= args.cache_len <= 4096:
         parser.error("--cache_len must be in [256, 4096]")
     if not 128 <= args.chunk_size <= 2048:
@@ -137,6 +193,16 @@ def validate_args(parser: argparse.ArgumentParser, args) -> None:
         parser.error("--jobs must be at least 1")
 
     def require_single_core(name):
+        """
+        Function:
+            Require one supported core count for a graph family.
+
+        Args:
+            name: Name of the parsed core-list argument.
+
+        Returns:
+            None.
+        """
         values = getattr(args, name)
         if len(values) != 1 or values[0] not in {1, 2, 4}:
             parser.error(f"--{name} must be one of 1, 2, or 4")
@@ -170,6 +236,16 @@ def validate_args(parser: argparse.ArgumentParser, args) -> None:
             )
 
 def main() -> None:
+    """
+    Function:
+        Parse compiler arguments and invoke the selected model API.
+
+    Args:
+        None; arguments are read from ``sys.argv``.
+
+    Returns:
+        None.
+    """
     parser = build_parser()
     args = parser.parse_args()
     validate_args(parser, args)

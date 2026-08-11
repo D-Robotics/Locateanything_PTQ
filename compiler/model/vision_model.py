@@ -56,6 +56,16 @@ class LocateAnythingVisionModel(Model):
         use_plugin: bool = False,
         w_bits: int = 8,
     ) -> None:
+        """
+        Function:
+            Construct the static MoonViT Vision graph.
+
+        Args:
+            vision_config: Vision model configuration.
+            llm_hidden: Language hidden width.
+            use_plugin: Enable optional quantization plugin stubs.
+            w_bits: Vision linear weight width.
+        """
         super().__init__()
         self.config = vision_config
         self.llm_hidden = llm_hidden
@@ -125,6 +135,16 @@ class LocateAnythingVisionModel(Model):
     # leap DSL build
     # ------------------------------------------------------------------
     def build(self, hidden_states):
+        """
+        Function:
+            Build the Vision graph from flattened image patches.
+
+        Args:
+            hidden_states: Flattened patch tensor.
+
+        Returns:
+            Projected visual embeddings.
+        """
         # hidden_states: (1, N, flat_dim)
         if self.use_plugin:
             hidden_states = self.quant_hiddenstates(hidden_states)
@@ -152,6 +172,16 @@ class LocateAnythingVisionModel(Model):
     # PyTorch forward — for calibration passes
     # ------------------------------------------------------------------
     def forward(self, hidden_states):
+        """
+        Function:
+            Run the eager Vision stack for calibration.
+
+        Args:
+            hidden_states: Flattened patch tensor.
+
+        Returns:
+            Projected visual embeddings.
+        """
         hidden_states = self.patch_embed(hidden_states)
         for blk in self.blocks:
             hidden_states = blk(hidden_states, self.rope_cos, self.rope_sin)
@@ -162,6 +192,16 @@ class LocateAnythingVisionModel(Model):
     # Leap input types for the Vision graph.
     # ------------------------------------------------------------------
     def get_leap_input_types(self) -> List[leap.TensorType]:
+        """
+        Function:
+            Describe the static Vision graph input tensor.
+
+        Args:
+            None.
+
+        Returns:
+            Leap tensor descriptor list.
+        """
         flat_dim = self.patch_size * self.patch_size * 3
         return [
             leap.TensorType([1, self.num_patches, flat_dim], leap.float16),

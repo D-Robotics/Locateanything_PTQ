@@ -5,7 +5,7 @@ paths:
   calibration_input_dir: ../datasets/calibration/locateanything/generated
   # Use a new last-level directory for each normal build. Reuse an existing
   # directory only with --resume.
-  output_dir: ../outputs/chunk768_cache4096_w8_bpu
+  output_dir: ../outputs/chunk1024_cache4096_w8
 
 outputs:
   # Final deployable files. Prefill is a graph inside language_hbm, not a
@@ -26,14 +26,10 @@ calibration:
   detailed_statistics: false
 
 language:
-  # The default task prompts fit within 768 positions after the 576 visual
-  # tokens. Increase this explicitly when compiling for longer prompts.
-  chunk_size: 768
+  # Stable S600 contract: 1024 Prefill positions, 4096 KV positions, and
+  # Host-side token sampling. Sampling policy belongs to the runtime config.
+  chunk_size: 1024
   cache_len: 4096
-  sampling_backend: bpu
-  sampling_temperature: 0.7
-  sampling_top_p: 0.9
-  sampling_repetition_penalty: 1.1
 
 quantization:
   vision_weight_bits: 8

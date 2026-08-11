@@ -55,6 +55,13 @@ class LocateAnythingVisionEncoder(nn.Module):
     """MoonViT encoder — 27 blocks + final_layernorm."""
 
     def __init__(self, cfg) -> None:
+        """
+        Function:
+            Construct the MoonViT encoder stack.
+
+        Args:
+            cfg: Vision configuration.
+        """
         super().__init__()
         self.blocks = nn.ModuleList([
             MoonViTBlockStatic(
@@ -69,6 +76,17 @@ class LocateAnythingVisionEncoder(nn.Module):
         self.final_layernorm = nn.LayerNorm(cfg.hidden_size)
 
     def forward(self, hidden_states: torch.Tensor, freqs_cos_sin: torch.Tensor) -> torch.Tensor:
+        """
+        Function:
+            Run all Vision encoder blocks and final normalization.
+
+        Args:
+            hidden_states: Patch embeddings.
+            freqs_cos_sin: Position-frequency table.
+
+        Returns:
+            Encoded patch states.
+        """
         for block in self.blocks:
             hidden_states = block(hidden_states, freqs_cos_sin)
         return self.final_layernorm(hidden_states)
@@ -91,6 +109,16 @@ class LocateAnythingVisionModel(nn.Module):
         image_h: int,
         image_w: int,
     ) -> None:
+        """
+        Function:
+            Construct the Vision tower and patch merger.
+
+        Args:
+            vision_cfg: MoonViT configuration.
+            llm_hidden: Language hidden width.
+            image_h: Static image height.
+            image_w: Static image width.
+        """
         super().__init__()
         # For upstream state_dict compatibility, we mirror the
         # MoonVitPretrainedModel structure at vision_model.*.
@@ -148,6 +176,13 @@ class LocateAnythingLanguageModel(nn.Module):
     """
 
     def __init__(self, text_cfg) -> None:
+        """
+        Function:
+            Construct the Qwen2 Language decoder stack.
+
+        Args:
+            text_cfg: LocateAnything text configuration.
+        """
         super().__init__()
         self.tie_word_embeddings = text_cfg.tie_word_embeddings
         self.vocab_size = text_cfg.vocab_size
@@ -230,6 +265,13 @@ class LocateAnything(nn.Module):
     """
 
     def __init__(self, cfg: LocateAnythingConfig) -> None:
+        """
+        Function:
+            Construct the top-level compile-time model wrapper.
+
+        Args:
+            cfg: Complete Vision and Language configuration.
+        """
         super().__init__()
         self.config = cfg
         self.vision_model = LocateAnythingVisionModel(
@@ -241,15 +283,55 @@ class LocateAnything(nn.Module):
         self.language_model = LocateAnythingLanguageModel(cfg.text_config)
 
     def get_vision_model(self) -> LocateAnythingVisionModel:
+        """
+        Function:
+            Return the Vision submodule.
+
+        Args:
+            None.
+
+        Returns:
+            Vision model.
+        """
         return self.vision_model
 
     def get_text_model(self) -> LocateAnythingLanguageModel:
+        """
+        Function:
+            Return the Language submodule.
+
+        Args:
+            None.
+
+        Returns:
+            Language model.
+        """
         return self.language_model
 
     def get_input_embeddings(self) -> nn.Embedding:
+        """
+        Function:
+            Return the Language token embedding module.
+
+        Args:
+            None.
+
+        Returns:
+            Token embedding module.
+        """
         return self.language_model.embed_tokens
 
     def get_config(self) -> LocateAnythingConfig:
+        """
+        Function:
+            Return the compile-time model configuration.
+
+        Args:
+            None.
+
+        Returns:
+            LocateAnything configuration.
+        """
         return self.config
 
     # ---- Loading ----------------------------------------------------------
@@ -259,7 +341,7 @@ class LocateAnything(nn.Module):
         image_height: int = 672,
         image_width: int = 672,
         decode_seq_len: int = 6,
-        chunk_size: int = 768,
+        chunk_size: int = 1024,
         cache_len: int = 4096,
         batch_size: int = 1,
         w_bits: int = 8,

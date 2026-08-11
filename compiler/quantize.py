@@ -65,12 +65,33 @@ class PlanStep:
 
 
 def _mapping(value: Any, name: str) -> dict[str, Any]:
+    """
+    Function:
+        Require a configuration value to be a mapping.
+
+    Args:
+        value: Parsed configuration value.
+        name: Field name used in the error message.
+
+    Returns:
+        The mapping value.
+    """
     if not isinstance(value, dict):
         raise ConfigurationError(f"{name} must be a mapping")
     return value
 
 
 def load_config(path: Path) -> dict[str, Any]:
+    """
+    Function:
+        Load and validate the complete compiler configuration.
+
+    Args:
+        path: YAML configuration path.
+
+    Returns:
+        Validated configuration with its directory recorded internally.
+    """
     path = path.resolve()
     try:
         config = load_config_file(path)
@@ -82,12 +103,33 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def _positive_int(value: Any, name: str) -> int:
+    """
+    Function:
+        Validate a positive integer configuration field.
+
+    Args:
+        value: Candidate value.
+        name: Field name used in the error message.
+
+    Returns:
+        The validated integer.
+    """
     if type(value) is not int or value <= 0:
         raise ConfigurationError(f"{name} must be a positive integer")
     return value
 
 
 def validate_config(config: Mapping[str, Any]) -> None:
+    """
+    Function:
+        Validate the fixed LocateAnything compiler configuration schema.
+
+    Args:
+        config: Parsed configuration mapping.
+
+    Returns:
+        None.
+    """
     required_sections = {
         "paths", "outputs", "calibration", "language", "quantization", "build",
     }
@@ -154,19 +196,11 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     language = _mapping(config.get("language"), "language")
     required_language = {"chunk_size", "cache_len"}
-    allowed_language = required_language | {
-        "sampling_backend", "sampling_temperature", "sampling_top_p",
-        "sampling_repetition_penalty",
-    }
-    if not required_language.issubset(language) or not set(language).issubset(allowed_language):
+    if set(language) != required_language:
         missing = sorted(required_language - set(language))
-        extra = sorted(set(language) - allowed_language)
+        extra = sorted(set(language) - required_language)
         details = [*(f"missing {name}" for name in missing), *(f"unknown {name}" for name in extra)]
         raise ConfigurationError("invalid language fields: " + ", ".join(details))
-    language.setdefault("sampling_backend", "bpu")
-    language.setdefault("sampling_temperature", 0.7)
-    language.setdefault("sampling_top_p", 0.9)
-    language.setdefault("sampling_repetition_penalty", 1.1)
     chunk_size = _positive_int(language.get("chunk_size"), "language.chunk_size")
     cache_len = _positive_int(language.get("cache_len"), "language.cache_len")
     if not 128 <= chunk_size <= 2048 or not 256 <= cache_len <= 4096:
@@ -178,15 +212,6 @@ def validate_config(config: Mapping[str, Any]) -> None:
             "language.chunk_size and language.cache_len must be multiples of 64, "
             "with cache_len greater than chunk_size"
         )
-    if language.get("sampling_backend") not in {"host", "bpu"}:
-        raise ConfigurationError("language.sampling_backend must be host or bpu")
-    for name in ("sampling_temperature", "sampling_top_p", "sampling_repetition_penalty"):
-        value = language.get(name)
-        if not isinstance(value, (int, float)) or not value > 0:
-            raise ConfigurationError(f"language.{name} must be positive")
-    if language["sampling_top_p"] > 1:
-        raise ConfigurationError("language.sampling_top_p must be <= 1")
-
     quantization = _mapping(config.get("quantization"), "quantization")
     required_quantization = {
         "vision_weight_bits", "language_weight_bits", "lm_head_weight_bits"
@@ -220,6 +245,17 @@ def validate_config(config: Mapping[str, Any]) -> None:
             raise ConfigurationError(f"build.cores.{name} must be 1, 2, or 4")
 
 def _resolve_config_path(config_dir: Path, raw: Any) -> Path:
+    """
+    Function:
+        Resolve a config-relative or explicitly absolute path.
+
+    Args:
+        config_dir: Directory containing the configuration file.
+        raw: Raw path value from YAML.
+
+    Returns:
+        Resolved filesystem path.
+    """
     expanded = Path(os.path.expanduser(str(raw)))
     if expanded.is_absolute():
         return expanded.resolve()
@@ -227,6 +263,17 @@ def _resolve_config_path(config_dir: Path, raw: Any) -> Path:
 
 
 def resolve_path(config: Mapping[str, Any], key: str) -> Path:
+    """
+    Function:
+        Resolve one named project path derived from the configuration.
+
+    Args:
+        config: Validated configuration mapping.
+        key: Internal resolved-path key.
+
+    Returns:
+        Resolved path for the requested artifact.
+    """
     config_dir = Path(config[CONFIG_DIR_KEY])
     paths = _mapping(config["paths"], "paths")
     checkpoint = _resolve_config_path(config_dir, paths["checkpoint"])
@@ -250,6 +297,16 @@ def resolve_path(config: Mapping[str, Any], key: str) -> Path:
 
 
 def jsonl_record_count(path: Path) -> int:
+    """
+    Function:
+        Count non-empty records in a JSONL calibration manifest.
+
+    Args:
+        path: JSONL manifest path.
+
+    Returns:
+        Number of non-empty records.
+    """
     try:
         count = sum(
             bool(line.strip())
@@ -265,6 +322,18 @@ def jsonl_record_count(path: Path) -> int:
 def calibration_sample_count(
     config: Mapping[str, Any], manifest: Path, override: int | None = None
 ) -> int:
+    """
+    Function:
+        Resolve the requested calibration sample count.
+
+    Args:
+        config: Validated compiler configuration.
+        manifest: Generated calibration JSONL path.
+        override: Optional command-line sample limit.
+
+    Returns:
+        Positive sample count.
+    """
     if override is not None:
         return _positive_int(override, "--max-samples")
     del config
@@ -274,6 +343,18 @@ def calibration_sample_count(
 def calibration_checkpoint(
     config: Mapping[str, Any], sample_count: int, override: int | None = None
 ) -> int:
+    """
+    Function:
+        Select a convergence checkpoint below the sample count.
+
+    Args:
+        config: Validated compiler configuration.
+        sample_count: Number of calibration samples.
+        override: Optional explicit checkpoint.
+
+    Returns:
+        Checkpoint sample count.
+    """
     del config
     configured = _positive_int(override, "--checkpoint-samples") if override is not None else None
     if sample_count < 2:
@@ -287,19 +368,60 @@ def calibration_checkpoint(
 
 
 def select_components(value: str) -> tuple[str, ...]:
+    """
+    Function:
+        Expand the public component selector into build components.
+
+    Args:
+        value: ``vision``, ``language`` or ``all``.
+
+    Returns:
+        Tuple of requested component names.
+    """
     return ("vision", "language") if value == "all" else (value,)
 
 
 def python_command(config: Mapping[str, Any]) -> str:
+    """
+    Function:
+        Select the Python interpreter running the orchestrator.
+
+    Args:
+        config: Validated compiler configuration (unused).
+
+    Returns:
+        Current interpreter path.
+    """
     del config
     return sys.executable
 
 
 def bash_command() -> str:
+    """
+    Function:
+        Locate Bash used by the portable pipeline wrappers.
+
+    Args:
+        None.
+
+    Returns:
+        Bash executable name or path.
+    """
     return shutil.which("bash") or "bash"
 
 
 def common_env(config: Mapping[str, Any], progress: str) -> dict[str, str]:
+    """
+    Function:
+        Build shared environment values for one pipeline step.
+
+    Args:
+        config: Validated compiler configuration.
+        progress: Console progress mode.
+
+    Returns:
+        Environment overrides for the child script.
+    """
     env = {
         "REPO_ROOT": str(PROJECT_ROOT),
         "PYTHON_BIN": python_command(config),
@@ -314,6 +436,17 @@ def common_env(config: Mapping[str, Any], progress: str) -> dict[str, str]:
 
 
 def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[PlanStep]:
+    """
+    Function:
+        Create the calibration-input preparation step.
+
+    Args:
+        args: Parsed prepare arguments.
+        config: Validated compiler configuration.
+
+    Returns:
+        One planned preparation step.
+    """
     calibration = _mapping(config["calibration"], "calibration")
     language = _mapping(config["language"], "language")
     build = _mapping(config["build"], "build")
@@ -350,6 +483,17 @@ def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Pl
 
 
 def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[PlanStep]:
+    """
+    Function:
+        Create the activation calibration step.
+
+    Args:
+        args: Parsed calibration arguments.
+        config: Validated compiler configuration.
+
+    Returns:
+        One planned calibration step.
+    """
     calibration = _mapping(config["calibration"], "calibration")
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
@@ -372,10 +516,6 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
         "CALIBRATION_COMPONENT": "all" if args.component == "all" else args.component,
         "CHUNK_SIZE": str(language["chunk_size"]),
         "CACHE_LEN": str(language["cache_len"]),
-        "SAMPLING_BACKEND": str(language["sampling_backend"]),
-        "SAMPLING_TEMPERATURE": str(language["sampling_temperature"]),
-        "SAMPLING_TOP_P": str(language["sampling_top_p"]),
-        "SAMPLING_REPETITION_PENALTY": str(language["sampling_repetition_penalty"]),
         "VISION_W_BITS": str(quantization["vision_weight_bits"]),
         "LANGUAGE_W_BITS": str(quantization["language_weight_bits"]),
         "LM_HEAD_W_BITS": str(quantization["lm_head_weight_bits"]),
@@ -399,6 +539,17 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
 
 
 def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[PlanStep]:
+    """
+    Function:
+        Create Vision and/or Language BC/HBM build steps.
+
+    Args:
+        args: Parsed build arguments.
+        config: Validated compiler configuration.
+
+    Returns:
+        Ordered build steps for the requested components.
+    """
     build = _mapping(config["build"], "build")
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
@@ -438,10 +589,6 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
             "JOBS": str(build["jobs"]),
             "CHUNK_SIZE": str(language["chunk_size"]),
             "CACHE_LEN": str(language["cache_len"]),
-            "SAMPLING_BACKEND": str(language["sampling_backend"]),
-            "SAMPLING_TEMPERATURE": str(language["sampling_temperature"]),
-            "SAMPLING_TOP_P": str(language["sampling_top_p"]),
-            "SAMPLING_REPETITION_PENALTY": str(language["sampling_repetition_penalty"]),
             "DECODE_SEQ_LEN": str(PBD_QUERY_LEN),
             "LM_HEAD_W_BITS": str(quantization["lm_head_weight_bits"]),
             "EXPORT_ONLY": "1" if args.target == "bc" else "0",
@@ -480,10 +627,30 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
 
 
 def quote_command(command: Iterable[str]) -> str:
+    """
+    Function:
+        Render a command sequence safely for terminal display.
+
+    Args:
+        command: Command arguments.
+
+    Returns:
+        Shell-escaped command string.
+    """
     return shlex.join(str(part) for part in command)
 
 
 def print_build_summary(config: Mapping[str, Any]) -> None:
+    """
+    Function:
+        Print the compact stable compiler configuration summary.
+
+    Args:
+        config: Validated compiler configuration.
+
+    Returns:
+        None.
+    """
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
     payload = {
@@ -494,7 +661,7 @@ def print_build_summary(config: Mapping[str, Any]) -> None:
         "language_w_bits": quantization["language_weight_bits"],
         "lm_head_w_bits": quantization["lm_head_weight_bits"],
         "language_graph_count": len(LANGUAGE_GRAPHS),
-        "sampling_backend": language["sampling_backend"],
+        "sampling": "host",
     }
     details = "  ".join(f"{key}={value}" for key, value in payload.items())
     print_console_line(
@@ -505,6 +672,18 @@ def print_build_summary(config: Mapping[str, Any]) -> None:
 
 
 def run_plan(steps: list[PlanStep], args: argparse.Namespace, config: Mapping[str, Any]) -> int:
+    """
+    Function:
+        Execute the planned pipeline steps in order.
+
+    Args:
+        steps: Ordered pipeline steps.
+        args: Parsed command-line options.
+        config: Validated compiler configuration.
+
+    Returns:
+        Zero on success, otherwise the failed child exit status.
+    """
     print_build_summary(config)
     if args.dry_run:
         for index, step in enumerate(steps, 1):
@@ -577,12 +756,32 @@ def run_plan(steps: list[PlanStep], args: argparse.Namespace, config: Mapping[st
 
 
 def add_common_options(parser: argparse.ArgumentParser) -> None:
+    """
+    Function:
+        Add progress, resume and dry-run controls to a subparser.
+
+    Args:
+        parser: Target argparse subparser.
+
+    Returns:
+        None.
+    """
     parser.add_argument("--progress", choices=PROGRESS_MODES, default="auto")
     parser.add_argument("--resume", action="store_true", help="reuse complete compatible outputs")
     parser.add_argument("--dry-run", action="store_true", help="print the resolved plan only")
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Function:
+        Construct the public prepare/calibrate/build command parser.
+
+    Args:
+        None.
+
+    Returns:
+        Configured argparse parser.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "LocateAnything prepare -> calibrate -> build orchestrator"
@@ -609,6 +808,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Function:
+        Dispatch one compiler pipeline command.
+
+    Args:
+        argv: Optional command-line argument list.
+
+    Returns:
+        Process exit status.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

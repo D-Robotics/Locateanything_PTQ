@@ -29,10 +29,30 @@ IO_DTYPE = "float16"
 
 
 def heading(value: str) -> None:
+    """
+    Function:
+        Print a concise Vision build stage heading.
+
+    Args:
+        value: Heading text.
+
+    Returns:
+        None.
+    """
     print(f"\n================== {value} ==================", flush=True)
 
 
 def canonical_dtype(value: Any) -> str:
+    """
+    Function:
+        Normalize a Vision tensor descriptor dtype.
+
+    Args:
+        value: Compiler tensor descriptor.
+
+    Returns:
+        Canonical dtype name.
+    """
     tensor_type = getattr(value, "type", None)
     raw = getattr(tensor_type, "np_dtype", None)
     if raw is None:
@@ -45,6 +65,16 @@ def canonical_dtype(value: Any) -> str:
 
 
 def validate_visual_function(function: Any) -> None:
+    """
+    Function:
+        Validate one Vision function's static input/output ABI.
+
+    Args:
+        function: Compiler function descriptor.
+
+    Returns:
+        None.
+    """
     if str(function.name) != "visual":
         raise RuntimeError(f"visual graph name mismatch: {function.name}")
     if len(function.inputs) != 1 or len(function.outputs) != 1:
@@ -69,6 +99,16 @@ def validate_visual_function(function: Any) -> None:
 
 
 def validate_visual_bc(path: Path) -> None:
+    """
+    Function:
+        Validate a source or converted Vision BC artifact.
+
+    Args:
+        path: BC path.
+
+    Returns:
+        None.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError(f"visual BC is missing: {path}")
     module = load(str(path))
@@ -88,6 +128,17 @@ def validate_visual_bc(path: Path) -> None:
 
 
 def valid_function(path: Path, expected_name: str) -> bool:
+    """
+    Function:
+        Check whether a converted Vision BC is readable and valid.
+
+    Args:
+        path: Candidate BC path.
+        expected_name: Expected function name.
+
+    Returns:
+        True when the candidate is valid.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -102,6 +153,16 @@ def valid_function(path: Path, expected_name: str) -> bool:
 
 
 def valid_hbo(path: Path) -> bool:
+    """
+    Function:
+        Check whether a Vision HBO artifact can be opened.
+
+    Args:
+        path: Candidate HBO path.
+
+    Returns:
+        True when the artifact is readable.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -112,6 +173,16 @@ def valid_hbo(path: Path) -> bool:
 
 
 def hbm_contract_matches(path: Path) -> bool:
+    """
+    Function:
+        Validate the single ``visual`` graph in a Vision HBM.
+
+    Args:
+        path: Candidate HBM path.
+
+    Returns:
+        True when the HBM matches the Vision ABI.
+    """
     if not path.is_file() or path.stat().st_size == 0:
         return False
     try:
@@ -129,10 +200,30 @@ def hbm_contract_matches(path: Path) -> bool:
 
 
 def valid_hbm(path: Path) -> bool:
+    """
+    Function:
+        Check a Vision HBM artifact against its ABI.
+
+    Args:
+        path: Candidate HBM path.
+
+    Returns:
+        True when the artifact is valid.
+    """
     return hbm_contract_matches(path)
 
 
 def parse_args() -> argparse.Namespace:
+    """
+    Function:
+        Parse standalone Vision build options.
+
+    Args:
+        None; options are read from ``sys.argv``.
+
+    Returns:
+        Parsed argument namespace.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--bc_path", type=Path, required=True)
     parser.add_argument("--hbm_path", type=Path, required=True)
@@ -145,6 +236,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """
+    Function:
+        Run Vision BC validation, conversion, HBO compilation and linking.
+
+    Args:
+        None; options are read from ``sys.argv``.
+
+    Returns:
+        Process exit status.
+    """
     args = parse_args()
     args.bc_path = args.bc_path.resolve()
     args.hbm_path = args.hbm_path.resolve()

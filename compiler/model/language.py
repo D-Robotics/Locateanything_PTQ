@@ -51,6 +51,16 @@ def remap_language_state_dict(raw_sd: dict) -> dict:
 
 
 def load_language_state_dict(model_dir: str) -> dict:
+    """
+    Function:
+        Load and remap Language tensors from a checkpoint directory.
+
+    Args:
+        model_dir: LocateAnything checkpoint directory.
+
+    Returns:
+        State dictionary keyed for the compiler Language model.
+    """
     idx_path = os.path.join(model_dir, "model.safetensors.index.json")
     if os.path.exists(idx_path):
         with open(idx_path) as f:
@@ -75,7 +85,7 @@ class LocateAnythingLanguageApi:
         self,
         input_model_path: str,
         output_model_path: str,
-        chunk_size: int = 768,
+        chunk_size: int = 1024,
         batch_size: int = 1,
         cache_len: int = 4096,
         decode_seq_len: int = 6,
@@ -91,11 +101,31 @@ class LocateAnythingLanguageApi:
         apply_hidden_rotation: bool = True,
         export_only: bool = False,
         calibration_scale_manifest: Optional[str] = None,
-        sampling_backend: str = "bpu",
-        sampling_temperature: float = 0.7,
-        sampling_top_p: float = 0.9,
-        sampling_repetition_penalty: float = 1.1,
     ) -> None:
+        """
+        Function:
+            Configure the standalone Language compiler API.
+
+        Args:
+            input_model_path: Float checkpoint directory.
+            output_model_path: Directory for BC/HBO/HBM artifacts.
+            chunk_size: Static Prefill sequence length.
+            batch_size: Static compiler batch size.
+            cache_len: KV cache capacity.
+            decode_seq_len: PBD query length.
+            device: Host device used during export preparation.
+            w_bits: Decoder weight width.
+            lm_head_w_bits: LM-head weight width.
+            mask_value: Attention mask fill value.
+            prefill_core_num: Prefill BPU core list.
+            decode_core_num: PBD BPU core list.
+            ar_core_num: AR BPU core list.
+            march: Target compiler march.
+            hidden_rotation_path: Optional hidden-domain rotation file.
+            apply_hidden_rotation: Whether to apply the rotation.
+            export_only: Stop after BC export.
+            calibration_scale_manifest: Optional PTQ scale manifest.
+        """
         if w_bits not in {4, 8}:
             raise ValueError(f"decoder w_bits must be 4 or 8, got {w_bits}")
         if lm_head_w_bits not in {4, 8}:
@@ -112,21 +142,14 @@ class LocateAnythingLanguageApi:
         self.w_bits = w_bits
         self.lm_head_w_bits = lm_head_w_bits
         self.mask_value = mask_value
-        self.prefill_core_num = prefill_core_num or [1]
-        self.decode_core_num = decode_core_num or [1]
+        self.prefill_core_num = prefill_core_num or [4]
+        self.decode_core_num = decode_core_num or [4]
         self.ar_core_num = ar_core_num or list(self.decode_core_num)
         self.march = march
         self.hidden_rotation_path = hidden_rotation_path
         self.apply_hidden_rotation = apply_hidden_rotation
         self.export_only = export_only
         self.calibration_scale_manifest = calibration_scale_manifest
-        if sampling_backend not in {"host", "bpu"}:
-            raise ValueError(f"unsupported sampling backend: {sampling_backend}")
-        if sampling_temperature <= 0 or not 0 < sampling_top_p <= 1:
-            raise ValueError("sampling temperature/top_p must be positive and top_p <= 1")
-        if sampling_repetition_penalty <= 0:
-            raise ValueError("sampling repetition penalty must be positive")
-        self.sampling_backend = sampling_backend
 
         os.makedirs(output_model_path, exist_ok=True)
         self.output_lm_model_path = standard_lm_name(
@@ -154,10 +177,6 @@ class LocateAnythingLanguageApi:
         tc.batch_size = batch_size
         tc.w_bits = w_bits
         tc.lm_head_w_bits = lm_head_w_bits
-        tc.sampling_backend = sampling_backend
-        tc.sampling_temperature = float(sampling_temperature)
-        tc.sampling_top_p = float(sampling_top_p)
-        tc.sampling_repetition_penalty = float(sampling_repetition_penalty)
         tc.has_scale = False
 
         print("[LocateAnythingLanguageApi] adapted text_config:")
@@ -226,6 +245,16 @@ class LocateAnythingLanguageApi:
         self._save_embed_tokens()
 
     def _validate_weight_policy(self, *, announce: bool = False) -> None:
+        """
+        Function:
+            Verify decoder and LM-head quantization widths.
+
+        Args:
+            announce: Print the validated policy when true.
+
+        Returns:
+            None.
+        """
         decoder_linears = [
             (name, module)
             for name, module in self.text_model.named_modules()
@@ -261,6 +290,16 @@ class LocateAnythingLanguageApi:
             )
 
     def _save_embed_tokens(self) -> None:
+        """
+        Function:
+            Save the tied embedding matrix in runtime binary format.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+        """
         emb = self.text_model.embed_tokens.weight.detach().to(
             dtype=torch.float16,
         ).cpu().numpy()
@@ -285,7 +324,16 @@ class LocateAnythingLanguageApi:
             )
         from pipeline.replay import apply_scale_manifest
         restored = apply_scale_manifest(
-            self.text_model, Path(self.calibration_scale_manifest), "language"
+            self.text_model,
+            Path(self.calibration_scale_manifest),
+            "language",
+            expected_profile={
+                "chunk_size": self.chunk_size,
+                "cache_len": self.cache_len,
+                "pbd_query_len": self.decode_seq_len,
+                "language_decoder_weight_bits": self.w_bits,
+                "language_lm_head_weight_bits": self.lm_head_w_bits,
+            },
         )
         print(f"[LocateAnythingLanguageApi] restored calibration: {restored}")
         self.text_model.compile_mode(True)
@@ -318,7 +366,6 @@ class LocateAnythingLanguageApi:
             stage_inputs[stage_name] = (
                 self.text_model.get_leap_input_types_decode_model(
                     num_layers, query_len, cache_len, batch_size,
-                    pbd=(stage_name == "decode" or stage_name.startswith("decode_pbd_q")),
                 )
             )
             stage_core_map[stage_name] = (
@@ -330,13 +377,9 @@ class LocateAnythingLanguageApi:
         for stage_name, inputs in stage_inputs.items():
             print(f"[LocateAnythingLanguageApi] export {stage_name}...")
             bc_path = str(Path(self.output_lm_model_path).with_suffix(f".{stage_name}.bc"))
-            self.text_model.set_export_stage(stage_name)
-            try:
-                bc = self.text_model.export_module(
-                    inputs, stage_name, bc_path, high_precision_qpp=True,
-                )
-            finally:
-                self.text_model.set_export_stage(None)
+            bc = self.text_model.export_module(
+                inputs, stage_name, bc_path, high_precision_qpp=True,
+            )
             bc_modules.append(bc)
 
         if self.export_only:
@@ -383,4 +426,14 @@ class LocateAnythingLanguageApi:
         print(f"[LocateAnythingLanguageApi] DONE — {self.output_lm_model_path}")
 
     def get_hbm_path(self) -> str:
+        """
+        Function:
+            Return the configured Language HBM output path.
+
+        Args:
+            None.
+
+        Returns:
+            Language HBM path.
+        """
         return self.output_lm_model_path
