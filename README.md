@@ -118,7 +118,7 @@ python compiler/quantize.py \
   build --component all --target hbm
 ```
 
-## Standalone Console
+## Inference
 
 ### 1. Download the deployment model
 
@@ -143,7 +143,7 @@ inference/models/
     └── added_tokens.json
 ```
 
-### 2. Build the Console
+### 2. Build the inference executable
 
 Copy the repository to the RDK S600 and run these commands from the repository root:
 

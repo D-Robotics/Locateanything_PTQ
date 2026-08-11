@@ -117,7 +117,7 @@ python compiler/quantize.py \
   build --component all --target hbm
 ```
 
-## 独立 Console
+## 推理
 
 ### 1. 下载部署模型
 
@@ -142,7 +142,7 @@ inference/models/
     └── added_tokens.json
 ```
 
-### 2. 编译 Console
+### 2. 编译推理程序
 
 将仓库复制到 RDK S600，在仓库根目录执行：
 
