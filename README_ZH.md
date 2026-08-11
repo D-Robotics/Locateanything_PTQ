@@ -119,37 +119,105 @@ python compiler/quantize.py \
 
 ## 独立 Console
 
-准备编译生成的模型和词表：
+### 1. 下载部署模型
 
 ```bash
-mkdir -p inference/models/tokenizer
+python3 -m pip install -U huggingface_hub
+export HF_ENDPOINT="https://hf-mirror.com"
 
-cp compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
-  inference/models/
-cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
-  inference/models/
-cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
-  inference/models/
-cp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
-  inference/models/tokenizer/
+hf download xkj521999/LocateAnything-3B-S600 \
+  --local-dir inference/models
 ```
 
-将仓库复制到 RDK S600，然后编译并启动 Console：
+运行时读取以下文件：
+
+```text
+inference/models/
+├── LocateAnything-3B_vision.hbm
+├── LocateAnything-3B_language.hbm
+├── LocateAnything-3B_embed_tokens.bin
+└── tokenizer/
+    ├── vocab.json
+    ├── merges.txt
+    └── added_tokens.json
+```
+
+### 2. 编译 Console
+
+将仓库复制到 RDK S600，在仓库根目录执行：
 
 ```bash
 cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
 cmake --build inference/build --parallel 2
+```
+
+### 3. 启动推理
+
+```bash
 ./inference/build/console --config inference/config.yaml
 ```
 
+启动后先加载图片或视频，再输入任务命令。
+
+#### 目标检测
+
 ```text
-[User] <<< /image <image-path>
-[User] <<< /detect person,car,bicycle
+[User] <<< /image inference/image/07_detection_multiclass.jpg
+[User] <<< /detect person,bus,bicycle
 ```
 
-图片结果保存为 `annotated.jpg` 和 `prediction.json`；视频结果保存为
-`annotated.mp4`、`predictions.jsonl` 和 `summary.json`。输出目录为
-`inference/outputs/<input-name>/`。
+#### GUI 定位
+
+```text
+[User] <<< /image inference/image/02_gui_rstudio.jpg
+[User] <<< /gui_box Go to file/function; Environment tab; Files tab
+```
+
+#### 指代定位
+
+```text
+[User] <<< /image inference/image/03_referring_graduation.jpg
+[User] <<< /ground person wearing a graduation cap; woman in a black dress; clock tower
+```
+
+#### OCR
+
+```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+[User] <<< /text
+```
+
+#### 指定文本定位
+
+```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+[User] <<< /ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia
+```
+
+#### 文档版面定位
+
+```text
+[User] <<< /image inference/image/05_layout_plot.jpg
+[User] <<< /layout plot,text
+```
+
+#### 点定位
+
+```text
+[User] <<< /image inference/image/06_pointing_succulent.jpg
+[User] <<< /point succulent
+```
+
+#### 视频目标检测
+
+```text
+[User] <<< /video inference/image/person_video.avi
+[User] <<< /detect person
+```
+
+图片结果保存在 `inference/outputs/<图片名>/annotated.jpg` 和
+`prediction.json`。视频结果保存在 `annotated.mp4`、`predictions.jsonl`
+和 `summary.json`。同一输入重复推理时覆盖原结果。
 
 ## 结果展示
 

@@ -120,37 +120,106 @@ python compiler/quantize.py \
 
 ## Standalone Console
 
-Prepare the generated models and tokenizer:
+### 1. Download the deployment model
 
 ```bash
-mkdir -p inference/models/tokenizer
+python3 -m pip install -U huggingface_hub
+export HF_ENDPOINT="https://hf-mirror.com"
 
-cp compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
-  inference/models/
-cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
-  inference/models/
-cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
-  inference/models/
-cp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
-  inference/models/tokenizer/
+hf download xkj521999/LocateAnything-3B-S600 \
+  --local-dir inference/models
 ```
 
-Copy the repository to RDK S600, then build and start the Console:
+The runtime reads these files:
+
+```text
+inference/models/
+├── LocateAnything-3B_vision.hbm
+├── LocateAnything-3B_language.hbm
+├── LocateAnything-3B_embed_tokens.bin
+└── tokenizer/
+    ├── vocab.json
+    ├── merges.txt
+    └── added_tokens.json
+```
+
+### 2. Build the Console
+
+Copy the repository to the RDK S600 and run these commands from the repository root:
 
 ```bash
 cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
 cmake --build inference/build --parallel 2
+```
+
+### 3. Run inference
+
+```bash
 ./inference/build/console --config inference/config.yaml
 ```
 
+Load an image or video, then enter a task command.
+
+#### Object detection
+
 ```text
-[User] <<< /image <image-path>
-[User] <<< /detect person,car,bicycle
+[User] <<< /image inference/image/07_detection_multiclass.jpg
+[User] <<< /detect person,bus,bicycle
 ```
 
-Image results are saved as `annotated.jpg` and `prediction.json`. Video
-results are saved as `annotated.mp4`, `predictions.jsonl`, and
-`summary.json` under `inference/outputs/<input-name>/`.
+#### GUI grounding
+
+```text
+[User] <<< /image inference/image/02_gui_rstudio.jpg
+[User] <<< /gui_box Go to file/function; Environment tab; Files tab
+```
+
+#### Referring grounding
+
+```text
+[User] <<< /image inference/image/03_referring_graduation.jpg
+[User] <<< /ground person wearing a graduation cap; woman in a black dress; clock tower
+```
+
+#### OCR
+
+```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+[User] <<< /text
+```
+
+#### Text grounding
+
+```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+[User] <<< /ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia
+```
+
+#### Document layout grounding
+
+```text
+[User] <<< /image inference/image/05_layout_plot.jpg
+[User] <<< /layout plot,text
+```
+
+#### Point localization
+
+```text
+[User] <<< /image inference/image/06_pointing_succulent.jpg
+[User] <<< /point succulent
+```
+
+#### Video object detection
+
+```text
+[User] <<< /video inference/image/person_video.avi
+[User] <<< /detect person
+```
+
+Image results are saved as `annotated.jpg` and `prediction.json` under
+`inference/outputs/<input-name>/`. Video results are saved as `annotated.mp4`,
+`predictions.jsonl`, and `summary.json`. Repeated runs overwrite the previous
+result for the same input.
 
 ## Results
 
