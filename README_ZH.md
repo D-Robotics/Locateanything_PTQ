@@ -5,7 +5,7 @@
 ![PTQ](https://img.shields.io/badge/PTQ-LocateAnything--3B-4C8C4A)
 ![W8](https://img.shields.io/badge/权重-W8-E67E22)
 ![RDK S600](https://img.shields.io/badge/目标平台-RDK%20S600-2F6BFF)
-![C++17](https://img.shields.io/badge/Console-C%2B%2B17-00599C?logo=cplusplus)
+![C++17](https://img.shields.io/badge/推理-C%2B%2B17-00599C?logo=cplusplus)
 ![License](https://img.shields.io/badge/协议-CC%20BY--NC%204.0-lightgrey)
 
 <p align="center">
@@ -13,7 +13,7 @@
 </p>
 
 `Locateanything_PTQ` 将 LocateAnything-3B 转换为面向地瓜机器人 RDK S600 的
-W8 HBM 模型，包含校准、PTQ、BC/HBO/HBM 编译和独立 C++ Console。
+W8 HBM 模型，包含校准、PTQ、BC/HBO/HBM 编译和 C++ 推理程序。
 
 ## 支持任务
 
@@ -64,9 +64,13 @@ git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 
-### 2. 安装 OELLM SDK
+### 2. 创建 Conda 环境并安装 OELLM SDK
 
 ```bash
+conda create -n locateanything_ptq python=3.10 -y
+conda activate locateanything_ptq
+python -m pip install -U pip huggingface_hub
+
 cd ..
 wget https://d-robotics-aitoolchain.oss-cn-beijing.aliyuncs.com/llm_s600/1.0.5/D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
 tar -xzf D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
@@ -119,7 +123,21 @@ python compiler/quantize.py \
 
 ## 推理
 
-### 1. 下载部署模型
+先在 RDK S600 上下载代码：
+
+```bash
+cd /home/sunrise
+git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
+cd Locateanything_PTQ
+```
+
+### 1. 准备模型
+
+以下两种方式任选其一。
+
+#### 下载发布模型
+
+在 RDK S600 上执行：
 
 ```bash
 python3 -m pip install -U huggingface_hub
@@ -127,6 +145,26 @@ export HF_ENDPOINT="https://hf-mirror.com"
 
 hf download xkj521999/LocateAnything-3B-S600 \
   --local-dir inference/models
+```
+
+#### 使用自行编译的模型
+
+在编译主机的仓库根目录执行，将 HBM、Embedding 和词表传到 RDK S600：
+
+```bash
+export S600_HOST="sunrise@<S600_IP>"
+export S600_REPO="/home/sunrise/Locateanything_PTQ"
+
+ssh "$S600_HOST" "mkdir -p '$S600_REPO/inference/models/tokenizer'"
+
+scp \
+  compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
+  compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
+  compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
+  "${S600_HOST}:${S600_REPO}/inference/models/"
+
+scp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
+  "${S600_HOST}:${S600_REPO}/inference/models/tokenizer/"
 ```
 
 运行时读取以下文件：
@@ -166,12 +204,16 @@ cmake --build inference/build --parallel 2
 [User] <<< /detect person,bus,bicycle
 ```
 
+<img src="assets/results/detection_multiclass.jpg" alt="目标检测" width="720">
+
 #### GUI 定位
 
 ```text
 [User] <<< /image inference/image/02_gui_rstudio.jpg
 [User] <<< /gui_box Go to file/function; Environment tab; Files tab
 ```
+
+<img src="assets/results/gui_rstudio.jpg" alt="GUI 定位" width="720">
 
 #### 指代定位
 
@@ -180,12 +222,16 @@ cmake --build inference/build --parallel 2
 [User] <<< /ground person wearing a graduation cap; woman in a black dress; clock tower
 ```
 
+<img src="assets/results/referring_graduation.jpg" alt="指代定位" width="520">
+
 #### OCR
 
 ```text
 [User] <<< /image inference/image/04_ocr_scrapbook.jpg
 [User] <<< /text
 ```
+
+<img src="assets/results/ocr_scrapbook.jpg" alt="OCR" width="720">
 
 #### 指定文本定位
 
@@ -194,6 +240,8 @@ cmake --build inference/build --parallel 2
 [User] <<< /ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia
 ```
 
+<img src="assets/results/ground_text_scrapbook.jpg" alt="指定文本定位" width="720">
+
 #### 文档版面定位
 
 ```text
@@ -201,12 +249,16 @@ cmake --build inference/build --parallel 2
 [User] <<< /layout plot,text
 ```
 
+<img src="assets/results/layout_plot.jpg" alt="文档版面" width="720">
+
 #### 点定位
 
 ```text
 [User] <<< /image inference/image/06_pointing_succulent.jpg
 [User] <<< /point succulent
 ```
+
+<img src="assets/results/point_succulent.jpg" alt="点定位" width="512">
 
 #### 视频目标检测
 
@@ -219,39 +271,7 @@ cmake --build inference/build --parallel 2
 `prediction.json`。视频结果保存在 `annotated.mp4`、`predictions.jsonl`
 和 `summary.json`。同一输入重复推理时覆盖原结果。
 
-## 结果展示
-
-### 示例
-
-目标检测，`/detect person,bus,bicycle`
-
-<img src="assets/results/detection_multiclass.jpg" alt="目标检测" width="720">
-
-GUI 定位，`/gui_box Go to file/function; Environment tab; Files tab`
-
-<img src="assets/results/gui_rstudio.jpg" alt="GUI 定位" width="720">
-
-指代定位，`/ground person wearing a graduation cap; woman in a black dress; clock tower`
-
-<img src="assets/results/referring_graduation.jpg" alt="指代定位" width="520">
-
-OCR，`/text`
-
-<img src="assets/results/ocr_scrapbook.jpg" alt="OCR" width="720">
-
-指定文本定位，`/ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia`
-
-<img src="assets/results/ground_text_scrapbook.jpg" alt="指定文本定位" width="720">
-
-文档版面，`/layout plot,text`
-
-<img src="assets/results/layout_plot.jpg" alt="文档版面" width="720">
-
-点定位，`/point succulent`
-
-<img src="assets/results/point_succulent.jpg" alt="点定位" width="512">
-
-### 性能
+## 性能
 
 | 任务 | 输出 Token | Vision (ms) | Prefill (ms) | Decode (ms) | 总耗时 (ms) | Decode (Token/s) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |

@@ -5,7 +5,7 @@ English | [简体中文](./README_ZH.md)
 ![PTQ](https://img.shields.io/badge/PTQ-LocateAnything--3B-4C8C4A)
 ![W8](https://img.shields.io/badge/weights-W8-E67E22)
 ![RDK S600](https://img.shields.io/badge/target-RDK%20S600-2F6BFF)
-![C++17](https://img.shields.io/badge/Console-C%2B%2B17-00599C?logo=cplusplus)
+![C++17](https://img.shields.io/badge/inference-C%2B%2B17-00599C?logo=cplusplus)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
 
 <p align="center">
@@ -14,7 +14,7 @@ English | [简体中文](./README_ZH.md)
 
 `Locateanything_PTQ` converts LocateAnything-3B into W8 HBM models for the
 D-Robotics RDK S600. It includes calibration, PTQ, BC/HBO/HBM compilation, and
-a standalone C++ Console.
+a C++ inference executable.
 
 ## Supported tasks
 
@@ -65,9 +65,13 @@ git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 
-### 2. Install the OELLM SDK
+### 2. Create a Conda environment and install the OELLM SDK
 
 ```bash
+conda create -n locateanything_ptq python=3.10 -y
+conda activate locateanything_ptq
+python -m pip install -U pip huggingface_hub
+
 cd ..
 wget https://d-robotics-aitoolchain.oss-cn-beijing.aliyuncs.com/llm_s600/1.0.5/D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
 tar -xzf D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
@@ -120,7 +124,21 @@ python compiler/quantize.py \
 
 ## Inference
 
-### 1. Download the deployment model
+Clone the repository on the RDK S600:
+
+```bash
+cd /home/sunrise
+git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
+cd Locateanything_PTQ
+```
+
+### 1. Prepare the model
+
+Choose either method below.
+
+#### Download the release model
+
+Run on the RDK S600:
 
 ```bash
 python3 -m pip install -U huggingface_hub
@@ -128,6 +146,27 @@ export HF_ENDPOINT="https://hf-mirror.com"
 
 hf download xkj521999/LocateAnything-3B-S600 \
   --local-dir inference/models
+```
+
+#### Use a locally compiled model
+
+Run from the repository root on the build host to transfer the HBM files,
+embedding table, and tokenizer to the RDK S600:
+
+```bash
+export S600_HOST="sunrise@<S600_IP>"
+export S600_REPO="/home/sunrise/Locateanything_PTQ"
+
+ssh "$S600_HOST" "mkdir -p '$S600_REPO/inference/models/tokenizer'"
+
+scp \
+  compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
+  compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
+  compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
+  "${S600_HOST}:${S600_REPO}/inference/models/"
+
+scp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
+  "${S600_HOST}:${S600_REPO}/inference/models/tokenizer/"
 ```
 
 The runtime reads these files:
@@ -167,12 +206,16 @@ Load an image or video, then enter a task command.
 [User] <<< /detect person,bus,bicycle
 ```
 
+<img src="assets/results/detection_multiclass.jpg" alt="Object detection" width="720">
+
 #### GUI grounding
 
 ```text
 [User] <<< /image inference/image/02_gui_rstudio.jpg
 [User] <<< /gui_box Go to file/function; Environment tab; Files tab
 ```
+
+<img src="assets/results/gui_rstudio.jpg" alt="GUI grounding" width="720">
 
 #### Referring grounding
 
@@ -181,12 +224,16 @@ Load an image or video, then enter a task command.
 [User] <<< /ground person wearing a graduation cap; woman in a black dress; clock tower
 ```
 
+<img src="assets/results/referring_graduation.jpg" alt="Referring grounding" width="520">
+
 #### OCR
 
 ```text
 [User] <<< /image inference/image/04_ocr_scrapbook.jpg
 [User] <<< /text
 ```
+
+<img src="assets/results/ocr_scrapbook.jpg" alt="OCR" width="720">
 
 #### Text grounding
 
@@ -195,6 +242,8 @@ Load an image or video, then enter a task command.
 [User] <<< /ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia
 ```
 
+<img src="assets/results/ground_text_scrapbook.jpg" alt="Text grounding" width="720">
+
 #### Document layout grounding
 
 ```text
@@ -202,12 +251,16 @@ Load an image or video, then enter a task command.
 [User] <<< /layout plot,text
 ```
 
+<img src="assets/results/layout_plot.jpg" alt="Document layout" width="720">
+
 #### Point localization
 
 ```text
 [User] <<< /image inference/image/06_pointing_succulent.jpg
 [User] <<< /point succulent
 ```
+
+<img src="assets/results/point_succulent.jpg" alt="Point localization" width="512">
 
 #### Video object detection
 
@@ -221,39 +274,7 @@ Image results are saved as `annotated.jpg` and `prediction.json` under
 `predictions.jsonl`, and `summary.json`. Repeated runs overwrite the previous
 result for the same input.
 
-## Results
-
-### Examples
-
-Object detection, `/detect person,bus,bicycle`
-
-<img src="assets/results/detection_multiclass.jpg" alt="Object detection" width="720">
-
-GUI grounding, `/gui_box Go to file/function; Environment tab; Files tab`
-
-<img src="assets/results/gui_rstudio.jpg" alt="GUI grounding" width="720">
-
-Referring grounding, `/ground person wearing a graduation cap; woman in a black dress; clock tower`
-
-<img src="assets/results/referring_graduation.jpg" alt="Referring grounding" width="520">
-
-OCR, `/text`
-
-<img src="assets/results/ocr_scrapbook.jpg" alt="OCR" width="720">
-
-Text grounding, `/ground_text LIVE love LAUGH; laugh giggle be silly; Yes Virginia`
-
-<img src="assets/results/ground_text_scrapbook.jpg" alt="Text grounding" width="720">
-
-Document layout, `/layout plot,text`
-
-<img src="assets/results/layout_plot.jpg" alt="Document layout" width="720">
-
-Point localization, `/point succulent`
-
-<img src="assets/results/point_succulent.jpg" alt="Point localization" width="512">
-
-### Performance
+## Performance
 
 | Task | Output tokens | Vision (ms) | Prefill (ms) | Decode (ms) | Total (ms) | Decode (tokens/s) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
