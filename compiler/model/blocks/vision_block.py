@@ -1,9 +1,7 @@
 """MoonViT single encoder block — pre-norm + attention + MLP2 with residuals.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_vit.py:414 (MoonVitEncoderLayer)
-    LocateAnything_hyphen_3B/modeling_vit.py:390 (MLP2)
+  LocateAnything's upstream MoonViT encoder layer and MLP2 implementation.
 
 Structure identical to upstream:
   x = x + attention(LN0(x), freqs)

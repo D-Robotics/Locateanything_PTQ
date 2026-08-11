@@ -1,9 +1,7 @@
 """MoonViT patch merger + mlp1 projector to LLM hidden.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_vit.py:538 (patch_merger function)
-    LocateAnything_hyphen_3B/modeling_locateanything.py:136 (self.mlp1)
+  LocateAnything's upstream patch merger and mlp1 projector.
 
 Report pit #10: the LayerNorm inside mlp1 sits at 4×hidden (4608), not
 hidden (1152). We must compile the merger and mlp1 as one unit — splitting

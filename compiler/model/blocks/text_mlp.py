@@ -1,8 +1,7 @@
 """Qwen2 SwiGLU MLP — compile-friendly port.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_qwen2.py:191 (Qwen2MLP)
+  LocateAnything's upstream Qwen2 MLP implementation.
 
 Structure:
   gate_proj(x)               (hidden -> intermediate)

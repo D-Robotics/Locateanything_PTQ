@@ -1,10 +1,7 @@
 """Qwen2 vanilla 1D rotary position embedding — compile-friendly.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_qwen2.py:117 (Qwen2RotaryEmbedding)
-    LocateAnything_hyphen_3B/modeling_qwen2.py:154 (rotate_half)
-    LocateAnything_hyphen_3B/modeling_qwen2.py:162 (apply_rotary_pos_emb)
+  LocateAnything's upstream Qwen2 rotary-embedding implementation.
 
 Design notes:
 

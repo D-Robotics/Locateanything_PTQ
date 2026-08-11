@@ -1,9 +1,7 @@
 """MoonViT attention block — packed wqkv + 2D RoPE + global SDPA.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_vit.py:414 (MoonVitEncoderLayer)
-    LocateAnything_hyphen_3B/modeling_vit.py:123 (sdpa_attention)
+  LocateAnything's upstream MoonViT encoder and SDPA attention functions.
 
 Compile-friendly restrictions applied (report pit #4):
   - Only the SDPA path is exported; flash_attn_varlen is never touched

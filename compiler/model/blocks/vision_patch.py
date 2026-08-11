@@ -1,9 +1,7 @@
 """MoonViT patch embedding — Conv2d + 2D interpolatable pos-emb.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_vit.py:224 (Learnable2DInterpPosEmb)
-    LocateAnything_hyphen_3B/modeling_vit.py:258 (MoonVisionPatchEmbed)
+  LocateAnything's upstream learnable positional embedding and patch embed.
 
 Design notes for the compile-friendly version:
 

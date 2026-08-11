@@ -1,10 +1,8 @@
 """LocateAnything top-level wrapper — MoonViT + mlp1 + Qwen2 decoder + final norm.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_locateanything.py
-    LocateAnything_hyphen_3B/modeling_vit.py:568 (MoonVitPretrainedModel)
-    LocateAnything_hyphen_3B/modeling_qwen2.py:1144 (Qwen2Model)
+  LocateAnything model implementation modules for the MoonViT and Qwen2
+  components. The compiler loads the user's checkpoint through explicit paths.
 
 Composition:
   vision_model

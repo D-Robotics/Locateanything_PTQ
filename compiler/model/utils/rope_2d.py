@@ -2,9 +2,7 @@
 original complex implementation.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/modeling_vit.py:302 (Rope2DPosEmb)
-    LocateAnything_hyphen_3B/modeling_vit.py:201 (apply_rope)
+  LocateAnything's upstream MoonViT two-dimensional rotary embedding.
 
 Why this file exists (report chapter 5.5 / pit #2):
   Upstream uses `torch.view_as_complex` / `torch.polar` which are

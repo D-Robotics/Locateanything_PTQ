@@ -1,9 +1,8 @@
 """PBD attention mask constructors — SDPA-friendly additive masks.
 
 Ground truth (upstream):
-  /home/kangjie.xu/.cache/huggingface/modules/transformers_modules/
-    LocateAnything_hyphen_3B/mask_sdpa_utils.py:104
-      (update_causal_mask_for_one_gen_window_2d)
+  LocateAnything's upstream mask utility
+  (update_causal_mask_for_one_gen_window_2d)
 
 The PBD decode HBM consumes a 4D attention_mask of shape
   (batch, 1, q_len, kv_len)
