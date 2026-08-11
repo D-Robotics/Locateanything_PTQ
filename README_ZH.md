@@ -6,28 +6,25 @@
 ![W8](https://img.shields.io/badge/权重-W8-E67E22)
 ![RDK S600](https://img.shields.io/badge/目标平台-RDK%20S600-2F6BFF)
 ![C++17](https://img.shields.io/badge/Console-C%2B%2B17-00599C?logo=cplusplus)
+![License](https://img.shields.io/badge/协议-CC%20BY--NC%204.0-lightgrey)
 
 <p align="center">
   <img src="assets/LocateAnything.jpg" alt="LocateAnything" width="100%">
 </p>
 
-`Locateanything_PTQ` 提供 LocateAnything-3B 的主机端校准、训练后量化以及
-BC/HBO/HBM 编译流程，并包含用于验证 HBM 的独立 C++ Console。本仓库不依赖
-ROS 或 TROS；运行时集成由
-[hobot_locateanything](https://github.com/LiuAnclouds/hobot_locateanything) 维护。
-
-源码采用 CC BY-NC 4.0 协议发布，不授予商业使用权。
+`Locateanything_PTQ` 将 LocateAnything-3B 转换为面向地瓜机器人 RDK S600 的
+W8 HBM 模型，包含校准、PTQ、BC/HBO/HBM 编译和独立 C++ Console。
 
 ## 支持任务
 
-| Console 命令 | 任务 |
+| 命令 | 任务 |
 | --- | --- |
 | `/detect person,car` | 开放词汇目标检测 |
 | `/ground <phrase>` | 指代定位 |
 | `/ground_single <phrase>` | 单目标指代定位 |
 | `/gui <element>` | GUI 点定位 |
 | `/gui_box <element>` | GUI 框定位 |
-| `/text` | 带文本框的 OCR |
+| `/text` | OCR |
 | `/ground_text <text>` | 指定文本定位 |
 | `/layout title,table,figure` | 文档版面定位 |
 | `/point <target>` | 点定位 |
@@ -38,17 +35,13 @@ ROS 或 TROS；运行时集成由
   <img src="assets/LocateAnything_pipeline.png" alt="LocateAnything 推理流程" width="100%">
 </p>
 
-模型流程为 `图像 + Prompt -> MoonViT -> Qwen2.5 Decoder -> 结构化结果解析`。
-
 | 项目 | 配置 |
 | --- | --- |
 | 模型 | LocateAnything-3B |
-| Vision | MoonViT，27 个 Block，`672 x 672`，W8 权重 |
-| Language | Qwen2.5 Decoder，36 层，Hidden Size 2048，W8 权重 |
-| LM Head | W8，词表大小 152681 |
-| 激活 | 动态量化 |
-| 校准数据 | 1,200 张选定图片 |
-| Language 图 | 固定 13 个图 |
+| Vision | MoonViT，27 个 Block，`672 x 672` |
+| Language | Qwen2.5 Decoder，36 层，Hidden Size 2048 |
+| 量化 | Vision W8、Language W8、LM Head W8 |
+| 校准 | 1,200 张图片，动态激活量化 |
 | Prefill / KV Cache | 1024 / 4096 Token |
 | 解码 | PBD q=6、AR q=1、Host 采样 |
 | 目标平台 | Nash-P，4 个 BPU 核，L2 `6:6:6:6` |
@@ -57,54 +50,58 @@ ROS 或 TROS；运行时集成由
 
 | 项目 | 要求 |
 | --- | --- |
-| 编译主机 | Linux x86_64、CUDA、PyTorch |
-| SDK | D-Robotics OELLM/HBDK 环境 |
-| Python | Python 3，以及 `compiler/requirements-host.txt` 中的依赖 |
-| Console | C++17、CMake、OpenCV、yaml-cpp |
-| 部署目标 | 地瓜机器人 RDK S600，AArch64 |
+| 编译主机 | Linux x86_64、NVIDIA GPU、CUDA |
+| SDK | D-Robotics LLM S600 SDK 1.0.5 |
+| Python | Python 3.10、PyTorch |
+| 部署平台 | RDK S600，AArch64 |
 
-## 使用介绍
+## 编译
 
-### 1. 准备源模型
-
-将官方 LocateAnything-3B 权重和 `locateanything_worker.py` 放到
-`compiler/config/quantization.yaml` 指定的位置：
-
-```text
-compiler/models/LocateAnything-3B/
-```
-
-该路径相对于仓库根目录，可在 YAML 中修改。
-
-### 2. 下载校准数据
-
-校准数据仓库提供 `source.zip`。下载并解压后，编译器应能读取
-`compiler/datasets/calibration/locateanything/source`：
+### 1. 下载代码
 
 ```bash
-export HF_ENDPOINT="https://hf-mirror.com"
-CALIB_DIR="compiler/datasets/calibration/locateanything"
-mkdir -p "$CALIB_DIR"
-
-hf download xkj521999/OE_LA_Calibration_data source.zip \
-  --repo-type dataset \
-  --local-dir "$CALIB_DIR"
-unzip -qo "$CALIB_DIR/source.zip" -d "$CALIB_DIR"
-
-test -f "$CALIB_DIR/source/selected.jsonl"
+git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
+cd Locateanything_PTQ
 ```
 
-数据集和生成的张量只作为本地输入，不提交到代码仓库。
-
-### 3. 执行 PTQ 与编译
-
-先进入外部 OELLM/HBDK 环境，再安装主机端 Python 依赖：
+### 2. 安装 OELLM SDK
 
 ```bash
+cd ..
+wget https://d-robotics-aitoolchain.oss-cn-beijing.aliyuncs.com/llm_s600/1.0.5/D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
+tar -xzf D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
+cd D-Robotics_LLM_S600_1.0.5_SDK/oellm_build
+python -m pip install -r requirements.txt
+python -m pip install hbdk4_compiler-*.whl leap_llm-*.whl
+
+cd ../../Locateanything_PTQ
 python -m pip install -r compiler/requirements-host.txt
 ```
 
-按顺序执行：
+### 3. 下载 LocateAnything-3B
+
+```bash
+export HF_ENDPOINT="https://hf-mirror.com"
+
+hf download nvidia/LocateAnything-3B \
+  --local-dir compiler/models/LocateAnything-3B
+```
+
+### 4. 下载校准数据
+
+```bash
+mkdir -p compiler/datasets/calibration/locateanything/source
+
+hf download xkj521999/OE_LA_Calibration_data source.zip \
+  --repo-type dataset \
+  --local-dir compiler/datasets/calibration/locateanything
+
+unzip -qo \
+  compiler/datasets/calibration/locateanything/source.zip \
+  -d compiler/datasets/calibration/locateanything/source
+```
+
+### 5. 编译 HBM
 
 ```bash
 python compiler/quantize.py \
@@ -120,24 +117,24 @@ python compiler/quantize.py \
   build --component all --target hbm
 ```
 
-`--target bc` 只导出 BC；`--target hbm` 继续完成 HBO 编译和 HBM 链接。普通编译
-使用配置文件中的输出目录；只有继续同一编译目录时才使用 `--resume`。
+## 独立 Console
 
-最终产物位于：
+准备编译生成的模型和词表：
 
-```text
-compiler/outputs/chunk1024_cache4096_w8/
-├── calibration/
-├── build/vision/LocateAnything-3B_vision.hbm
-├── build/language/LocateAnything-3B_language.hbm
-├── build/language/LocateAnything-3B_embed_tokens.bin
-└── logs/
+```bash
+mkdir -p inference/models/tokenizer
+
+cp compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
+  inference/models/
+cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
+  inference/models/
+cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
+  inference/models/
+cp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
+  inference/models/tokenizer/
 ```
 
-### 4. 独立 C++ Console
-
-Console 不依赖 ROS 或 ament。将生成的 HBM、Embedding 二进制和词表文件放到
-`inference/config.yaml` 指定的位置，然后在仓库根目录编译：
+将仓库复制到 RDK S600，然后编译并启动 Console：
 
 ```bash
 cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
@@ -145,25 +142,14 @@ cmake --build inference/build --parallel 2
 ./inference/build/console --config inference/config.yaml
 ```
 
-交互示例：
-
 ```text
 [User] <<< /image <image-path>
 [User] <<< /detect person,car,bicycle
 ```
 
-视频输入使用 `/video <path>`，随后输入任务命令。结果写入
-`inference/outputs/<input-name>/`：
-
-```text
-annotated.jpg                  # 图片输入
-prediction.json
-annotated.mp4                  # 视频输入
-predictions.jsonl
-summary.json
-```
-
-同一输入重复推理时，目录中的结果文件会被覆盖。
+图片结果保存为 `annotated.jpg` 和 `prediction.json`；视频结果保存为
+`annotated.mp4`、`predictions.jsonl` 和 `summary.json`。输出目录为
+`inference/outputs/<input-name>/`。
 
 ## 结果展示
 

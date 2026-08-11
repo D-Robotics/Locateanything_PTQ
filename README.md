@@ -6,29 +6,26 @@ English | [简体中文](./README_ZH.md)
 ![W8](https://img.shields.io/badge/weights-W8-E67E22)
 ![RDK S600](https://img.shields.io/badge/target-RDK%20S600-2F6BFF)
 ![C++17](https://img.shields.io/badge/Console-C%2B%2B17-00599C?logo=cplusplus)
+![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
 
 <p align="center">
   <img src="assets/LocateAnything.jpg" alt="LocateAnything" width="100%">
 </p>
 
-`Locateanything_PTQ` provides the host-side calibration, post-training
-quantization, and BC/HBO/HBM build pipeline for LocateAnything-3B. It also
-contains an independent C++ Console for validating the generated HBM files.
-The repository does not depend on ROS or TROS. Runtime integration is
-maintained in [hobot_locateanything](https://github.com/LiuAnclouds/hobot_locateanything).
-
-The source is released under CC BY-NC 4.0. Commercial use is not granted.
+`Locateanything_PTQ` converts LocateAnything-3B into W8 HBM models for the
+D-Robotics RDK S600. It includes calibration, PTQ, BC/HBO/HBM compilation, and
+a standalone C++ Console.
 
 ## Supported tasks
 
-| Console command | Task |
+| Command | Task |
 | --- | --- |
 | `/detect person,car` | Open-vocabulary detection |
 | `/ground <phrase>` | Referring grounding |
 | `/ground_single <phrase>` | Single-instance grounding |
 | `/gui <element>` | GUI point grounding |
 | `/gui_box <element>` | GUI box grounding |
-| `/text` | OCR with text boxes |
+| `/text` | OCR |
 | `/ground_text <text>` | Text grounding |
 | `/layout title,table,figure` | Document layout grounding |
 | `/point <target>` | Point localization |
@@ -39,17 +36,13 @@ The source is released under CC BY-NC 4.0. Commercial use is not granted.
   <img src="assets/LocateAnything_pipeline.png" alt="LocateAnything pipeline" width="100%">
 </p>
 
-The model path is `image + prompt -> MoonViT -> Qwen2.5 decoder -> structured result parsing`.
-
 | Item | Configuration |
 | --- | --- |
 | Model | LocateAnything-3B |
-| Vision | MoonViT, 27 blocks, `672 x 672`, W8 weights |
-| Language | Qwen2.5 decoder, 36 layers, hidden size 2048, W8 weights |
-| LM Head | W8, vocabulary size 152681 |
-| Activations | Dynamic quantization |
-| Calibration | 1,200 selected images |
-| Language graphs | 13 fixed graphs |
+| Vision | MoonViT, 27 blocks, `672 x 672` |
+| Language | Qwen2.5 decoder, 36 layers, hidden size 2048 |
+| Quantization | Vision W8, Language W8, LM Head W8 |
+| Calibration | 1,200 images, dynamic activation quantization |
 | Prefill / KV cache | 1024 / 4096 tokens |
 | Decode | PBD q=6, AR q=1, host sampling |
 | Target | Nash-P, four BPU cores, L2 `6:6:6:6` |
@@ -58,57 +51,58 @@ The model path is `image + prompt -> MoonViT -> Qwen2.5 decoder -> structured re
 
 | Item | Requirement |
 | --- | --- |
-| Build host | Linux x86_64, CUDA and PyTorch |
-| SDK | D-Robotics OELLM/HBDK environment |
-| Python | Python 3 with the packages in `compiler/requirements-host.txt` |
-| Console | C++17, CMake, OpenCV, yaml-cpp |
-| Deploy target | D-Robotics RDK S600, AArch64 |
+| Build host | Linux x86_64, NVIDIA GPU, CUDA |
+| SDK | D-Robotics LLM S600 SDK 1.0.5 |
+| Python | Python 3.10, PyTorch |
+| Target | RDK S600, AArch64 |
 
-## Usage
+## Build
 
-### 1. Prepare the source model
-
-Place the official LocateAnything-3B checkpoint and its
-`locateanything_worker.py` implementation at the path used by
-`compiler/config/quantization.yaml`:
-
-```text
-compiler/models/LocateAnything-3B/
-```
-
-The path is relative to the repository and can be changed in the YAML file.
-
-### 2. Download calibration data
-
-The calibration repository contains `source.zip`. Download and extract it so
-that the compiler can read `compiler/datasets/calibration/locateanything/source`:
+### 1. Clone the repository
 
 ```bash
-export HF_ENDPOINT="https://hf-mirror.com"
-CALIB_DIR="compiler/datasets/calibration/locateanything"
-mkdir -p "$CALIB_DIR"
-
-hf download xkj521999/OE_LA_Calibration_data source.zip \
-  --repo-type dataset \
-  --local-dir "$CALIB_DIR"
-unzip -qo "$CALIB_DIR/source.zip" -d "$CALIB_DIR"
-
-test -f "$CALIB_DIR/source/selected.jsonl"
+git clone https://github.com/LiuAnclouds/Locateanything_PTQ.git
+cd Locateanything_PTQ
 ```
 
-The dataset and generated tensors are local inputs; they are not committed to
-this repository.
-
-### 3. Run PTQ and build
-
-Activate the external OELLM/HBDK environment first, then install the host-side
-Python requirements:
+### 2. Install the OELLM SDK
 
 ```bash
+cd ..
+wget https://d-robotics-aitoolchain.oss-cn-beijing.aliyuncs.com/llm_s600/1.0.5/D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
+tar -xzf D-Robotics_LLM_S600_1.0.5_SDK.tar.gz
+cd D-Robotics_LLM_S600_1.0.5_SDK/oellm_build
+python -m pip install -r requirements.txt
+python -m pip install hbdk4_compiler-*.whl leap_llm-*.whl
+
+cd ../../Locateanything_PTQ
 python -m pip install -r compiler/requirements-host.txt
 ```
 
-Run the stages in order:
+### 3. Download LocateAnything-3B
+
+```bash
+export HF_ENDPOINT="https://hf-mirror.com"
+
+hf download nvidia/LocateAnything-3B \
+  --local-dir compiler/models/LocateAnything-3B
+```
+
+### 4. Download calibration data
+
+```bash
+mkdir -p compiler/datasets/calibration/locateanything/source
+
+hf download xkj521999/OE_LA_Calibration_data source.zip \
+  --repo-type dataset \
+  --local-dir compiler/datasets/calibration/locateanything
+
+unzip -qo \
+  compiler/datasets/calibration/locateanything/source.zip \
+  -d compiler/datasets/calibration/locateanything/source
+```
+
+### 5. Build HBM
 
 ```bash
 python compiler/quantize.py \
@@ -124,26 +118,24 @@ python compiler/quantize.py \
   build --component all --target hbm
 ```
 
-`--target bc` stops after BC export. `--target hbm` continues through HBO and
-HBM linking. A normal build uses the output directory in the configuration;
-use `--resume` only when continuing that same build directory.
+## Standalone Console
 
-The final artifacts are written under:
+Prepare the generated models and tokenizer:
 
-```text
-compiler/outputs/chunk1024_cache4096_w8/
-├── calibration/
-├── build/vision/LocateAnything-3B_vision.hbm
-├── build/language/LocateAnything-3B_language.hbm
-├── build/language/LocateAnything-3B_embed_tokens.bin
-└── logs/
+```bash
+mkdir -p inference/models/tokenizer
+
+cp compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
+  inference/models/
+cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
+  inference/models/
+cp compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
+  inference/models/
+cp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
+  inference/models/tokenizer/
 ```
 
-### 4. Standalone C++ Console
-
-The Console has no ROS or ament dependency. Copy the generated HBM files, the
-embedding binary, and tokenizer assets into the paths configured in
-`inference/config.yaml`, then build from the repository root:
+Copy the repository to RDK S600, then build and start the Console:
 
 ```bash
 cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
@@ -151,25 +143,14 @@ cmake --build inference/build --parallel 2
 ./inference/build/console --config inference/config.yaml
 ```
 
-Example session:
-
 ```text
 [User] <<< /image <image-path>
 [User] <<< /detect person,car,bicycle
 ```
 
-For video, use `/video <path>` followed by a task command. Results are written
-to `inference/outputs/<input-name>/`:
-
-```text
-annotated.jpg                  # image input
-prediction.json
-annotated.mp4                  # video input
-predictions.jsonl
-summary.json
-```
-
-Repeated inference for the same input replaces the files in that directory.
+Image results are saved as `annotated.jpg` and `prediction.json`. Video
+results are saved as `annotated.mp4`, `predictions.jsonl`, and
+`summary.json` under `inference/outputs/<input-name>/`.
 
 ## Results
 

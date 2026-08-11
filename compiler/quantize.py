@@ -142,8 +142,7 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     paths = _mapping(config.get("paths"), "paths")
     required_paths = {
-        "checkpoint", "locateanything_source", "calibration_data",
-        "calibration_input_dir", "output_dir",
+        "checkpoint", "calibration_data", "output_dir",
     }
     missing_paths = sorted(required_paths - set(paths))
     if missing_paths:
@@ -277,16 +276,13 @@ def resolve_path(config: Mapping[str, Any], key: str) -> Path:
     config_dir = Path(config[CONFIG_DIR_KEY])
     paths = _mapping(config["paths"], "paths")
     checkpoint = _resolve_config_path(config_dir, paths["checkpoint"])
-    source_dir = _resolve_config_path(config_dir, paths["locateanything_source"])
     calibration_data = _resolve_config_path(config_dir, paths["calibration_data"])
-    calibration_input_dir = _resolve_config_path(config_dir, paths["calibration_input_dir"])
     output_dir = _resolve_config_path(config_dir, paths["output_dir"])
     resolved = {
         "model": checkpoint,
-        "source_dir": source_dir,
         "selected_jsonl": calibration_data / "selected.jsonl",
         "generated_dir": output_dir / "calibration" / "generated",
-        "generated_jsonl": calibration_input_dir / "generated.jsonl",
+        "generated_jsonl": output_dir / "calibration" / "generated" / "generated.jsonl",
         "calibration_dir": output_dir / "calibration" / "statistics",
         "scale_manifest": output_dir / "calibration" / "statistics" / "calibration_scale_manifest.json",
         "coverage_json": output_dir / "calibration" / "statistics" / "calibration_graph_coverage.json",
@@ -457,7 +453,6 @@ def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Pl
     env.update({
         "SELECTED_JSONL": str(selected),
         "OUTPUT_DIR": str(output_dir),
-        "LOCATEANYTHING_SOURCE": str(resolve_path(config, "source_dir")),
         "MODEL_PATH": str(resolve_path(config, "model")),
         "DEVICE": str(build["device"]),
         "DTYPE": str(calibration["prepare_dtype"]),
@@ -508,7 +503,6 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
     env.update({
         "GENERATED_JSONL": str(generated_jsonl),
         "SELECTED_JSONL": str(resolve_path(config, "selected_jsonl")),
-        "LOCATEANYTHING_SOURCE": str(resolve_path(config, "source_dir")),
         "MODEL_PATH": str(resolve_path(config, "model")),
         "OUTPUT_DIR": str(resolve_path(config, "calibration_dir")),
         "DEVICE": str(build["device"]),

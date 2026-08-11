@@ -7,7 +7,6 @@ PYTHON_BIN=${PYTHON_BIN:-python3}
 PREPARE_SCRIPT=${PREPARE_SCRIPT:-"$REPO_ROOT/compiler/pipeline/prepare.py"}
 SELECTED_JSONL=${SELECTED_JSONL:?set SELECTED_JSONL to the selected dataset index}
 OUTPUT_DIR=${OUTPUT_DIR:?set OUTPUT_DIR to a new or resume-compatible output directory}
-LOCATEANYTHING_SOURCE=${LOCATEANYTHING_SOURCE:?set to the directory containing locateanything_worker.py}
 MODEL_PATH=${MODEL_PATH:?set MODEL_PATH to the LocateAnything-3B checkpoint}
 DEVICE=${DEVICE:-cuda:0}
 DTYPE=${DTYPE:-bfloat16}
@@ -153,7 +152,6 @@ value = {
     "wrapper_pid": os.getppid(),
     "selected_jsonl": "${SELECTED_JSONL}",
     "output_dir": "${OUTPUT_DIR}",
-    "locateanything_source": "${LOCATEANYTHING_SOURCE}",
     "model_path": "${MODEL_PATH}",
     "prepare_script": "${PREPARE_SCRIPT}",
     "device": "${DEVICE}",
@@ -190,7 +188,6 @@ fi
 PYTHONUNBUFFERED=1 "$PYTHON_BIN" "$PREPARE_SCRIPT" generate \
   --selected-jsonl "$SELECTED_JSONL" \
   --output-dir "$OUTPUT_DIR" \
-  --source-dir "$LOCATEANYTHING_SOURCE" \
   --model-path "$MODEL_PATH" \
   --device "$DEVICE" \
   --dtype "$DTYPE" \

@@ -9,7 +9,6 @@ Run LocateAnything activation calibration.
 Required variables:
   GENERATED_JSONL       prepared calibration records
   SELECTED_JSONL        calibration dataset records
-  LOCATEANYTHING_SOURCE directory containing locateanything_worker.py
   OUTPUT_DIR            activation statistics output directory
   MAX_SAMPLES           number of records to replay
   CHECKPOINT_SAMPLES    convergence checkpoint below MAX_SAMPLES
@@ -26,7 +25,6 @@ PYTHON_BIN=${PYTHON_BIN:-python3}
 REPLAY_SCRIPT=${REPLAY_SCRIPT:-"$REPO_ROOT/compiler/pipeline/calibrate.py"}
 GENERATED_JSONL=${GENERATED_JSONL:?set GENERATED_JSONL to the prepared calibration records}
 SELECTED_JSONL=${SELECTED_JSONL:?set SELECTED_JSONL to the calibration dataset records}
-LOCATEANYTHING_SOURCE=${LOCATEANYTHING_SOURCE:?set LOCATEANYTHING_SOURCE to the worker source directory}
 MODEL_PATH=${MODEL_PATH:-"$REPO_ROOT/compiler/models/LocateAnything-3B"}
 OUTPUT_DIR=${OUTPUT_DIR:?set OUTPUT_DIR to the activation statistics directory}
 DEVICE=${DEVICE:-cuda:0}
@@ -104,7 +102,7 @@ write_exit_record() {
 
 write_initial_metadata() {
   "$PYTHON_BIN" - "$META_PATH" "$STARTED_AT" "$GENERATED_JSONL" "$SELECTED_JSONL" \
-    "$LOCATEANYTHING_SOURCE" "$MODEL_PATH" "$OUTPUT_DIR" "$REPLAY_SCRIPT" \
+    "$MODEL_PATH" "$OUTPUT_DIR" "$REPLAY_SCRIPT" \
     "$DEVICE" "$DTYPE" "$CHUNK_SIZE" "$CACHE_LEN" "$MAX_SAMPLES" \
     "$CHECKPOINT_SAMPLES" "$IMAGE_TOKEN_ID" "$CALIBRATION_COMPONENT" \
     "$VISION_W_BITS" "$LANGUAGE_W_BITS" "$LM_HEAD_W_BITS" "$REPLAY_SEED" \
@@ -116,7 +114,7 @@ import sys
 from pathlib import Path
 
 (
-    path, started_at, generated, selected, source, model, output, replay, device,
+    path, started_at, generated, selected, model, output, replay, device,
     dtype, chunk, cache, max_samples, checkpoint, image_token, component,
     vision_w_bits, language_w_bits, lm_head_w_bits, replay_seed, rotation,
     log_path, detailed_statistics, repo_root,
@@ -140,7 +138,6 @@ value = {
     "wrapper_pid": os.getppid(),
     "generated_jsonl": generated,
     "selected_jsonl": selected,
-    "locateanything_source": source,
     "model_path": model,
     "output_dir": output,
     "replay_script": replay,
@@ -230,7 +227,6 @@ echo "[calibrate] output=$OUTPUT_DIR component=$CALIBRATION_COMPONENT device=$DE
 replay_args=(
   --generated-jsonl "$GENERATED_JSONL"
   --selected-jsonl "$SELECTED_JSONL"
-  --source-dir "$LOCATEANYTHING_SOURCE"
   --model-path "$MODEL_PATH"
   --output-dir "$OUTPUT_DIR"
   --device "$DEVICE"

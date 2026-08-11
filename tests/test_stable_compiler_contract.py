@@ -12,9 +12,9 @@ COMPILER_ROOT = PROJECT_ROOT / "compiler"
 if str(COMPILER_ROOT) not in sys.path:
     sys.path.insert(0, str(COMPILER_ROOT))
 
-from configuration import load_config_file  # noqa: E402
 from build_adapter import build_parser as build_adapter_parser  # noqa: E402
 from build_adapter import validate_device  # noqa: E402
+from quantize import load_config, resolve_path  # noqa: E402
 from model.contract import (  # noqa: E402
     LANGUAGE_INPUT_COUNT,
     LANGUAGE_OUTPUT_COUNT,
@@ -65,13 +65,22 @@ class StableLanguageContractTests(unittest.TestCase):
                 )
 
     def test_default_config_matches_stable_profile(self) -> None:
-        config = load_config_file(COMPILER_ROOT / "config" / "quantization.yaml")
+        config = load_config(COMPILER_ROOT / "config" / "quantization.yaml")
+        self.assertNotIn("locateanything_source", config["paths"])
+        self.assertNotIn("calibration_input_dir", config["paths"])
+        self.assertTrue(
+            (COMPILER_ROOT / "pipeline" / "locateanything_worker.py").is_file()
+        )
         self.assertEqual(config["language"], {"chunk_size": 1024, "cache_len": 4096})
         self.assertEqual(config["quantization"]["language_weight_bits"], 8)
         self.assertEqual(config["quantization"]["lm_head_weight_bits"], 8)
         self.assertEqual(config["build"]["cores"]["prefill"], 4)
         self.assertEqual(config["build"]["cores"]["pbd"], 4)
         self.assertEqual(config["build"]["cores"]["ar"], 4)
+        self.assertEqual(
+            resolve_path(config, "generated_jsonl"),
+            resolve_path(config, "generated_dir") / "generated.jsonl",
+        )
 
     def test_build_adapter_defaults_match_stable_profile(self) -> None:
         args = build_adapter_parser().parse_args(

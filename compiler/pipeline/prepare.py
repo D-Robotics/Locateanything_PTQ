@@ -730,23 +730,9 @@ def generate_bundle(args: argparse.Namespace) -> int:
     import torch
     from PIL import Image
 
+    from compiler.pipeline.locateanything_worker import LocateAnythingWorker
+
     model_path = args.model_path.resolve()
-    source_dir = (
-        args.source_dir.resolve() if args.source_dir else model_path.parent
-    )
-    worker_path = source_dir / "locateanything_worker.py"
-    if not worker_path.is_file():
-        raise FileNotFoundError(
-            f"locateanything_worker.py not found in {source_dir}; "
-            "set --source-dir to the official LocateAnything implementation directory"
-        )
-    sys.path.insert(0, str(source_dir))
-    try:
-        from locateanything_worker import LocateAnythingWorker
-    except ImportError as exc:
-        raise ImportError(
-            f"could not import locateanything_worker.py from {source_dir}"
-        ) from exc
 
     selected_path = args.selected_jsonl.resolve()
     bundle_root = selected_path.parent
@@ -785,7 +771,6 @@ def generate_bundle(args: argparse.Namespace) -> int:
         model_path=str(model_path),
         device=args.device,
         dtype=dtype,
-        use_batch_runtime=False,
     )
 
     generated_records: dict[str, dict[str, Any]] = dict(completed)
@@ -950,7 +935,6 @@ def generate_bundle(args: argparse.Namespace) -> int:
     summary = {
         "schema_version": SCHEMA_VERSION,
         "model_path": str(model_path),
-        "locateanything_source": str(source_dir),
         "selected_manifest": str(selected_path),
         "generated_manifest": generated_manifest.name,
         "sample_count": len(ordered),
@@ -1006,10 +990,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate_parser.add_argument("--selected-jsonl", type=Path, required=True)
     generate_parser.add_argument("--output-dir", type=Path, required=True)
-    generate_parser.add_argument(
-        "--source-dir", type=Path,
-        help="directory containing locateanything_worker.py; defaults to --model-path parent",
-    )
     generate_parser.add_argument("--model-path", type=Path, required=True)
     generate_parser.add_argument(
         "--output-format", choices=["pt", "npy"], default="pt",

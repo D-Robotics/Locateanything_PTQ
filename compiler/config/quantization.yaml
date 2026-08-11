@@ -1,8 +1,6 @@
 paths:
   checkpoint: ../models/LocateAnything-3B
-  locateanything_source: ../models/LocateAnything-3B
   calibration_data: ../datasets/calibration/locateanything/source
-  calibration_input_dir: ../datasets/calibration/locateanything/generated
   # Use a new last-level directory for each normal build. Reuse an existing
   # directory only with --resume.
   output_dir: ../outputs/chunk1024_cache4096_w8

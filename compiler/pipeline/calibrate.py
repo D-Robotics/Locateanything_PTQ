@@ -602,7 +602,6 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--generated-jsonl", type=Path, required=True)
     result.add_argument("--selected-jsonl", type=Path, required=True)
-    result.add_argument("--source-dir", type=Path, required=True)
     result.add_argument("--model-path", type=Path, required=True)
     result.add_argument("--output-dir", type=Path, required=True)
     result.add_argument("--device", default="cuda:0")
