@@ -6,7 +6,7 @@ English | [简体中文](./README_ZH.md)
 ![W8](https://img.shields.io/badge/weights-W8-E67E22)
 ![RDK S600](https://img.shields.io/badge/target-RDK%20S600-2F6BFF)
 ![C++17](https://img.shields.io/badge/inference-C%2B%2B17-00599C?logo=cplusplus)
-![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-lightgrey)
+![License](https://img.shields.io/badge/license-Apache--2.0-lightgrey)
 
 <p align="center">
   <img src="assets/LocateAnything.jpg" alt="LocateAnything" width="100%">
