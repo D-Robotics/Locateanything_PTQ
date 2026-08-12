@@ -60,7 +60,7 @@ W8 HBM 模型，包含校准、PTQ、BC/HBO/HBM 编译和 C++ 推理程序。
 ### 1. 下载代码
 
 ```bash
-git clone git@github.com:D-Robotics/Locateanything_PTQ.git
+git clone https://github.com/D-Robotics/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 
@@ -127,7 +127,7 @@ python compiler/quantize.py \
 
 ```bash
 cd /home/sunrise
-git clone git@github.com:D-Robotics/Locateanything_PTQ.git
+git clone https://github.com/D-Robotics/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 

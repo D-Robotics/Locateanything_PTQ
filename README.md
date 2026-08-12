@@ -61,7 +61,7 @@ a C++ inference executable.
 ### 1. Clone the repository
 
 ```bash
-git clone git@github.com:D-Robotics/Locateanything_PTQ.git
+git clone https://github.com/D-Robotics/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 
@@ -128,7 +128,7 @@ Clone the repository on the RDK S600:
 
 ```bash
 cd /home/sunrise
-git clone git@github.com:D-Robotics/Locateanything_PTQ.git
+git clone https://github.com/D-Robotics/Locateanything_PTQ.git
 cd Locateanything_PTQ
 ```
 
