@@ -18,7 +18,7 @@ a C++ inference executable.
 
 ## Model overview
 
-[LocateAnything](https://github.com/NVlabs/Eagle/tree/main/Embodied) performs open-semantic visual detection and grounding from text instructions. Its tasks include open-vocabulary object detection, referring expression grounding, GUI grounding, OCR, text grounding, document layout grounding, and point localization. PBD (Parallel Box Decoding) generates bounding-box coordinates in parallel.
+[LocateAnything](https://github.com/NVlabs/Eagle/tree/main/Embodied) is an open-semantic visual grounding model. It performs object detection, referring expression grounding, GUI and text grounding, document layout grounding, and point localization from text instructions. PBD (Parallel Box Decoding) generates bounding-box coordinates in parallel. Its task categories are listed below.
 
 ### Task categories
 
@@ -32,7 +32,7 @@ a C++ inference executable.
 | Document layout grounding | Locates titles, body text, tables, figures, and other document regions | Layout categories and bounding boxes |
 | Point localization | Locates objects in general visual scenes from natural-language descriptions | Object point coordinates |
 
-LocateAnything uses relatively fixed Prompt formats for detection and grounding. We provide built-in task templates based on its training data. Enter only the query through the corresponding command. `<query>` denotes a query target; separate multiple queries with commas. `<type>` denotes a document layout element type.
+LocateAnything is designed primarily for visual detection and grounding tasks, whose Prompt formats are relatively fixed. We provide built-in task templates based on the Prompt formats used in the training data. Users only need to enter the query target through the corresponding command. `<query>` denotes a query target; separate multiple queries with commas. `<type>` denotes a document layout element type.
 
 | Command | Example | Description |
 | --- | --- | --- |
@@ -47,6 +47,22 @@ LocateAnything uses relatively fixed Prompt formats for detection and grounding.
 | `/point <query>[,<query>...]` | `/point succulent,the succulent in the center` | Returns point coordinates for the two queries |
 
 Model: [D-Robotics/LocateAnything-3B-BPU](https://huggingface.co/D-Robotics/LocateAnything-3B-BPU)
+
+Inference source: [D-Robotics/hobot_locateanything](https://github.com/D-Robotics/hobot_locateanything)
+
+## Inference Performance
+
+The table reports one query per task. Multiple queries share one Vision run; Prefill, Decode, output tokens, and total latency are accumulated across queries.
+
+| Platform | Task | Output tokens | Vision (ms) | Prefill (ms) | Decode (ms) | Total (ms) | Decode (tokens/s) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| RDK S600 | Object detection | 47 | 254.7 | 151.6 | 526.3 | 978.5 | 89.3 |
+| RDK S600 | GUI grounding | 14 | 253.2 | 149.7 | 266.0 | 720.7 | 52.6 |
+| RDK S600 | Referring grounding | 14 | 246.0 | 152.3 | 164.5 | 603.6 | 85.1 |
+| RDK S600 | OCR | 66 | 245.5 | 152.4 | 665.3 | 1148.3 | 99.2 |
+| RDK S600 | Text grounding | 15 | 253.0 | 150.2 | 166.6 | 653.5 | 90.0 |
+| RDK S600 | Layout grounding | 43 | 245.4 | 151.8 | 448.1 | 904.7 | 96.0 |
+| RDK S600 | Point localization | 37 | 246.0 | 152.2 | 480.5 | 923.5 | 77.0 |
 
 ## Model and quantization
 
@@ -107,22 +123,16 @@ python -m pip install -r compiler/requirements-host.txt
 ### 3. Download LocateAnything-3B
 
 ```bash
-MODEL_DIR="compiler/models/LocateAnything-3B"
-MODEL_URL="https://hf-mirror.com/nvidia/LocateAnything-3B/resolve/main"
-mkdir -p "$MODEL_DIR"
+mkdir -p compiler/models/LocateAnything-3B
 
-for file in \
-  config.json generation_config.json preprocessor_config.json \
-  processor_config.json tokenizer_config.json special_tokens_map.json \
-  added_tokens.json chat_template.json vocab.json merges.txt \
-  model.safetensors.index.json \
-  model-00001-of-00002.safetensors model-00002-of-00002.safetensors \
-  configuration_locateanything.py configuration_qwen2.py \
-  modeling_locateanything.py modeling_qwen2.py modeling_vit.py \
-  processing_locateanything.py image_processing_locateanything.py \
-  generate_utils.py mask_magi_utils.py mask_sdpa_utils.py; do
-  wget -c -P "$MODEL_DIR" "$MODEL_URL/$file"
-done
+wget -c -P compiler/models/LocateAnything-3B \
+  https://hf-mirror.com/nvidia/LocateAnything-3B/resolve/main/{config.json,generation_config.json,preprocessor_config.json,processor_config.json}
+wget -c -P compiler/models/LocateAnything-3B \
+  https://hf-mirror.com/nvidia/LocateAnything-3B/resolve/main/{tokenizer_config.json,special_tokens_map.json,added_tokens.json,chat_template.json,vocab.json,merges.txt}
+wget -c -P compiler/models/LocateAnything-3B \
+  https://hf-mirror.com/nvidia/LocateAnything-3B/resolve/main/{model.safetensors.index.json,model-00001-of-00002.safetensors,model-00002-of-00002.safetensors}
+wget -c -P compiler/models/LocateAnything-3B \
+  https://hf-mirror.com/nvidia/LocateAnything-3B/resolve/main/{configuration_locateanything.py,configuration_qwen2.py,modeling_locateanything.py,modeling_qwen2.py,modeling_vit.py,processing_locateanything.py,image_processing_locateanything.py,generate_utils.py,mask_magi_utils.py,mask_sdpa_utils.py}
 ```
 
 ### 4. Download calibration data
@@ -169,16 +179,20 @@ Choose either method below.
 #### Download the release model
 
 ```bash
-MODEL_DIR="inference/models"
-MODEL_URL="https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main"
-mkdir -p "$MODEL_DIR/tokenizer"
+mkdir -p inference/models/tokenizer
 
-wget -c -P "$MODEL_DIR" "$MODEL_URL/LocateAnything-3B_vision.hbm"
-wget -c -P "$MODEL_DIR" "$MODEL_URL/LocateAnything-3B_language.hbm"
-wget -c -P "$MODEL_DIR" "$MODEL_URL/LocateAnything-3B_embed_tokens.bin"
-wget -c -P "$MODEL_DIR/tokenizer" "$MODEL_URL/tokenizer/vocab.json"
-wget -c -P "$MODEL_DIR/tokenizer" "$MODEL_URL/tokenizer/merges.txt"
-wget -c -P "$MODEL_DIR/tokenizer" "$MODEL_URL/tokenizer/added_tokens.json"
+wget -c -P inference/models \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/LocateAnything-3B_vision.hbm
+wget -c -P inference/models \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/LocateAnything-3B_language.hbm
+wget -c -P inference/models \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/LocateAnything-3B_embed_tokens.bin
+wget -c -P inference/models/tokenizer \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/tokenizer/vocab.json
+wget -c -P inference/models/tokenizer \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/tokenizer/merges.txt
+wget -c -P inference/models/tokenizer \
+  https://hf-mirror.com/D-Robotics/LocateAnything-3B-BPU/resolve/main/tokenizer/added_tokens.json
 ```
 
 #### Use a locally compiled model
@@ -187,19 +201,17 @@ Run from the repository root on the build host to transfer the HBM files,
 embedding table, and tokenizer to the RDK S600:
 
 ```bash
-export S600_HOST="sunrise@<S600_IP>"
-export S600_REPO="/home/sunrise/Locateanything_PTQ"
-
-ssh "$S600_HOST" "mkdir -p '$S600_REPO/inference/models/tokenizer'"
+ssh sunrise@<S600_IP> \
+  "mkdir -p /home/sunrise/Locateanything_PTQ/inference/models/tokenizer"
 
 scp \
   compiler/outputs/chunk1024_cache4096_w8/build/vision/LocateAnything-3B_vision.hbm \
   compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_language.hbm \
   compiler/outputs/chunk1024_cache4096_w8/build/language/LocateAnything-3B_embed_tokens.bin \
-  "${S600_HOST}:${S600_REPO}/inference/models/"
+  sunrise@<S600_IP>:/home/sunrise/Locateanything_PTQ/inference/models/
 
 scp compiler/models/LocateAnything-3B/{vocab.json,merges.txt,added_tokens.json} \
-  "${S600_HOST}:${S600_REPO}/inference/models/tokenizer/"
+  sunrise@<S600_IP>:/home/sunrise/Locateanything_PTQ/inference/models/tokenizer/
 ```
 
 The runtime reads these files:
@@ -230,6 +242,16 @@ cmake --build inference/build --parallel 2
 ./inference/build/console --config inference/config.yaml
 ```
 
+Enter an image and a detection command:
+
+```text
+/image inference/image/07_detection_multiclass.jpg
+```
+
+```text
+/detect person,bus,bicycle
+```
+
 Console output:
 
 ```text
@@ -240,44 +262,24 @@ Loading Language HBM...
 HBM loaded  [============================] 16.7 s
 Ready  S600/Nash-P  |  hybrid  |  max tokens 4096
 Tasks
-  /detect cat,dog              目标检测
-  /ground <query>[,<query>...] 指代表达，多查询
-  /ground_single <query>[,...] 指代表达，单目标查询
-  /gui <query>[,<query>...]    GUI 点定位
+  /detect cat,dog               目标检测
+  /ground <query>[,<query>...]  指代表达，多查询
+  /ground_single <query>[,...]  指代表达，单目标查询
+  /gui <query>[,<query>...]     GUI 点定位
   /gui_box <query>[,<query>...] GUI 框定位
-  /text                        文本 OCR
-  /ground_text <query>[,...]   指定文本定位
-  /layout title,table,figure   文档版面分析
-  /point <query>[,<query>...]  通用点定位
+  /text                         文本 OCR
+  /ground_text <query>[,...]    指定文本定位
+  /layout title,table,figure    文档版面分析
+  /point <query>[,<query>...]   通用点定位
 Session
-  /image <image_path>          加载图片
-  /video <video_path>          加载视频并处理全部帧
-  regen                        重跑上次请求
-  reset                        清除当前媒体
-  exit                         退出程序
-```
-
-Load an image:
-
-```text
-/image inference/image/07_detection_multiclass.jpg
-```
-
-Image loading output:
-
-```text
+  /image <image_path>           加载图片
+  /video <video_path>           加载视频并处理全部帧
+  regen                         重跑上次请求
+  reset                         清除当前媒体
+  exit                          退出程序
+[User] <<< /image inference/image/07_detection_multiclass.jpg
 Image loaded  inference/image/07_detection_multiclass.jpg
-```
-
-Enter a detection command:
-
-```text
-/detect person,bus,bicycle
-```
-
-Inference output:
-
-```text
+[User] <<< /detect person,bus,bicycle
 [Assistant] >>> /detect person,bus,bicycle
 Performance
   Vision   254.7 ms
@@ -296,31 +298,59 @@ Saved
 
 ### 4. Advanced tasks
 
+Advanced features use the same Console for inference.
+
+```bash
+./inference/build/console --config inference/config.yaml
+```
+
+Console output:
+
+```text
+[UCP]: UCP version = 3.12.3
+[DNN]: 3.12.3_(4.5.4 HBRT)
+Loading Vision HBM...
+Loading Language HBM...
+HBM loaded  [============================] 16.7 s
+Ready  S600/Nash-P  |  hybrid  |  max tokens 4096
+Tasks
+  /detect cat,dog               目标检测
+  /ground <query>[,<query>...]  指代表达，多查询
+  /ground_single <query>[,...]  指代表达，单目标查询
+  /gui <query>[,<query>...]     GUI 点定位
+  /gui_box <query>[,<query>...] GUI 框定位
+  /text                         文本 OCR
+  /ground_text <query>[,...]    指定文本定位
+  /layout title,table,figure    文档版面分析
+  /point <query>[,<query>...]   通用点定位
+Session
+  /image <image_path>           加载图片
+  /video <video_path>           加载视频并处理全部帧
+  regen                         重跑上次请求
+  reset                         清除当前媒体
+  exit                          退出程序
+```
+
 Separate multiple queries with commas. Vision runs once per image or video frame. Language runs once per query, and the predictions are merged.
 
 #### GUI grounding
 
-Load an image:
+Enter an image and a grounding command:
 
 ```text
 /image inference/image/02_gui_rstudio.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/02_gui_rstudio.jpg
-```
-
-Enter a grounding command:
-
 ```text
 /gui_box Go to file/function,Environment tab,Files tab
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/02_gui_rstudio.jpg
+Image loaded  inference/image/02_gui_rstudio.jpg
+[User] <<< /gui_box Go to file/function,Environment tab,Files tab
 [Assistant] >>> /gui_box Go to file/function,Environment tab,Files tab
 Performance
   Vision   252.9 ms
@@ -330,33 +360,31 @@ Performance
   Total    1342.8 ms
 Result
   Labels Environment tab, Files tab, Go to file/function  |  Boxes 3  |  Points 0  |  Stop im_end
+Saved
+  Image  inference/outputs/02_gui_rstudio/annotated.jpg
+  JSON   inference/outputs/02_gui_rstudio/prediction.json
 ```
 
 <img src="assets/results/gui_rstudio.jpg" alt="GUI grounding" width="720">
 
 #### Referring grounding
 
-Load an image:
+Enter an image and a grounding command:
 
 ```text
 /image inference/image/03_referring_graduation.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/03_referring_graduation.jpg
-```
-
-Enter a grounding command:
-
 ```text
 /ground person wearing a graduation cap,woman in a black dress,clock tower
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/03_referring_graduation.jpg
+Image loaded  inference/image/03_referring_graduation.jpg
+[User] <<< /ground person wearing a graduation cap,woman in a black dress,clock tower
 [Assistant] >>> /ground person wearing a graduation cap,woman in a black dress,clock tower
 Performance
   Vision   250.4 ms
@@ -366,33 +394,31 @@ Performance
   Total    1268.8 ms
 Result
   Labels clock tower, person wearing a graduation cap, woman in a black dress  |  Boxes 3  |  Points 0  |  Stop im_end
+Saved
+  Image  inference/outputs/03_referring_graduation/annotated.jpg
+  JSON   inference/outputs/03_referring_graduation/prediction.json
 ```
 
 <img src="assets/results/referring_graduation.jpg" alt="Referring grounding" width="520">
 
 #### OCR
 
-Load an image:
+Enter an image and the OCR command:
 
 ```text
 /image inference/image/04_ocr_scrapbook.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/04_ocr_scrapbook.jpg
-```
-
-Enter the OCR command:
-
 ```text
 /text
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+Image loaded  inference/image/04_ocr_scrapbook.jpg
+[User] <<< /text
 [Assistant] >>> /text
 Performance
   Vision   246.2 ms
@@ -403,33 +429,31 @@ Performance
 Result
   Labels LIVE love LAUGH, Yes, Virginiaina, [to-day]], laugh giggle be silly
   Boxes 5  |  Points 0  |  Stop im_end
+Saved
+  Image  inference/outputs/04_ocr_scrapbook/annotated.jpg
+  JSON   inference/outputs/04_ocr_scrapbook/prediction.json
 ```
 
 <img src="assets/results/ocr_scrapbook.jpg" alt="OCR" width="720">
 
 #### Text grounding
 
-Load an image:
+Enter an image and a grounding command:
 
 ```text
 /image inference/image/04_ocr_scrapbook.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/04_ocr_scrapbook.jpg
-```
-
-Enter a grounding command:
-
 ```text
 /ground_text LIVE love LAUGH,laugh giggle be silly,Yes Virginia
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/04_ocr_scrapbook.jpg
+Image loaded  inference/image/04_ocr_scrapbook.jpg
+[User] <<< /ground_text LIVE love LAUGH,laugh giggle be silly,Yes Virginia
 [Assistant] >>> /ground_text LIVE love LAUGH,laugh giggle be silly,Yes Virginia
 Performance
   Vision   246.0 ms
@@ -439,33 +463,31 @@ Performance
   Total    1311.1 ms
 Result
   Labels LIVE love LAUGH., Yes Virginia., laugh giggle be silly.  |  Boxes 3  |  Points 0  |  Stop im_end
+Saved
+  Image  inference/outputs/04_ocr_scrapbook/annotated.jpg
+  JSON   inference/outputs/04_ocr_scrapbook/prediction.json
 ```
 
 <img src="assets/results/ground_text_scrapbook.jpg" alt="Text grounding" width="720">
 
 #### Document layout grounding
 
-Load an image:
+Enter an image and a layout command:
 
 ```text
 /image inference/image/05_layout_plot.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/05_layout_plot.jpg
-```
-
-Enter a layout command:
-
 ```text
 /layout plot,text
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/05_layout_plot.jpg
+Image loaded  inference/image/05_layout_plot.jpg
+[User] <<< /layout plot,text
 [Assistant] >>> /layout plot,text
 Performance
   Vision   245.6 ms
@@ -475,33 +497,31 @@ Performance
   Total    908.8 ms
 Result
   Labels plot, text  |  Boxes 6  |  Points 0  |  Stop im_end
+Saved
+  Image  inference/outputs/05_layout_plot/annotated.jpg
+  JSON   inference/outputs/05_layout_plot/prediction.json
 ```
 
 <img src="assets/results/layout_plot.jpg" alt="Document layout" width="720">
 
 #### Point localization
 
-Load an image:
+Enter an image and a point localization command:
 
 ```text
 /image inference/image/06_pointing_succulent.jpg
 ```
 
-Image loading output:
-
-```text
-Image loaded  inference/image/06_pointing_succulent.jpg
-```
-
-Enter a point command:
-
 ```text
 /point succulent,the succulent in the center
 ```
 
-Inference output:
+Console output:
 
 ```text
+[User] <<< /image inference/image/06_pointing_succulent.jpg
+Image loaded  inference/image/06_pointing_succulent.jpg
+[User] <<< /point succulent,the succulent in the center
 [Assistant] >>> /point succulent,the succulent in the center
 Performance
   Vision   245.9 ms
@@ -511,6 +531,9 @@ Performance
   Total    1272.7 ms
 Result
   Labels succulent, the succulent in the center  |  Boxes 0  |  Points 9  |  Stop im_end
+Saved
+  Image  inference/outputs/06_pointing_succulent/annotated.jpg
+  JSON   inference/outputs/06_pointing_succulent/prediction.json
 ```
 
 <img src="assets/results/point_succulent.jpg" alt="Point localization" width="512">
@@ -523,6 +546,9 @@ Load a video with `/video`; task commands are the same as for images:
 
 ```text
 /video inference/image/person_video.avi
+```
+
+```text
 /detect person
 ```
 
@@ -535,21 +561,7 @@ inference/outputs/person_video/
 └── summary.json
 ```
 
-## Performance
-
-The table reports one query per task. Multiple queries share one Vision run; Prefill, Decode, output tokens, and total latency are accumulated across queries.
-
-| Task | Output tokens | Vision (ms) | Prefill (ms) | Decode (ms) | Total (ms) | Decode (tokens/s) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Object detection | 47 | 254.7 | 151.6 | 526.3 | 978.5 | 89.3 |
-| GUI grounding | 14 | 253.2 | 149.7 | 266.0 | 720.7 | 52.6 |
-| Referring grounding | 14 | 246.0 | 152.3 | 164.5 | 603.6 | 85.1 |
-| OCR | 66 | 245.5 | 152.4 | 665.3 | 1148.3 | 99.2 |
-| Text grounding | 15 | 253.0 | 150.2 | 166.6 | 653.5 | 90.0 |
-| Document layout | 43 | 245.4 | 151.8 | 448.1 | 904.7 | 96.0 |
-| Point localization | 37 | 246.0 | 152.2 | 480.5 | 923.5 | 77.0 |
-
-### Resource Usage
+## Resource Usage
 
 | Task | Avg BPU (%) | CPU (%) | Console RSS (MiB) | DDR Read (GiB/s) | DDR Write (GiB/s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
