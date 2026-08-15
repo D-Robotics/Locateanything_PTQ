@@ -4,6 +4,15 @@
 
 namespace locateanything_runtime {
 
+/**
+ * @brief Build position IDs for one prefill or decode step.
+ * @param q_len Number of query positions.
+ * @param past_len Number of cache rows committed before this step.
+ * @param block_size PBD block width, or zero to disable shared positions.
+ * @param is_pbd Apply the upstream PBD position adjustment when true.
+ * @param out Destination [1, 1, q_len] position tensor.
+ * @return True when dimensions are valid and positions were built.
+ */
 bool BuildPositionIds(int32_t q_len,
                       int32_t past_len,
                       int32_t block_size,

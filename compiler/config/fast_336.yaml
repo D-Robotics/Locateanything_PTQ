@@ -1,0 +1,45 @@
+paths:
+  checkpoint: ../models/LocateAnything-3B
+  calibration_data: ../datasets/calibration/locateanything/source
+  output_dir: ../outputs/fast_336_prefill256_cache1024_w8
+
+outputs:
+  vision_hbm: LocateAnything-3B_vision.hbm
+  language_hbm: LocateAnything-3B_language.hbm
+  embedding_bin: LocateAnything-3B_embed_tokens.bin
+
+calibration:
+  slow_samples: 128
+  max_new_tokens: 768
+  seed: 20260729
+  prepare_dtype: bfloat16
+  statistics_dtype: float16
+  detailed_statistics: false
+
+vision:
+  image_width: 336
+  image_height: 336
+  resize_mode: letterbox
+  letterbox_fill: 128
+
+language:
+  chunk_size: 256
+  cache_len: 1024
+
+runtime:
+  max_new_tokens: 768
+
+quantization:
+  vision_weight_bits: 8
+  language_weight_bits: 8
+  lm_head_weight_bits: 8
+
+build:
+  march: nash-p
+  device: cuda:0
+  jobs: 16
+  cores:
+    vision: 4
+    prefill: 4
+    pbd: 4
+    ar: 4

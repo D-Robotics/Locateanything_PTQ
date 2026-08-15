@@ -1,19 +1,19 @@
-# Standalone PTQ validation Console configuration.
+# Standalone fast_336 validation Console configuration.
 # Paths are resolved from the directory where the Console is started.
 inference:
-  model_directory: inference/models
+  model_directory: inference/models/fast_336
   tokenizer_directory: inference/models/tokenizer
   vision_model: LocateAnything-3B_vision.hbm
   language_model: LocateAnything-3B_language.hbm
   embeddings: LocateAnything-3B_embed_tokens.bin
 
-  image_width: 672
-  image_height: 672
+  image_width: 336
+  image_height: 336
   resize_mode: letterbox
   letterbox_fill: 128
 
   generation_mode: hybrid
-  max_new_tokens: 4096
+  max_new_tokens: 768
   nms_iou: 0.9
 
   # S600 BPU L2 partition, applied before Vision and Language initialize.
@@ -22,4 +22,4 @@ inference:
   l2m_sizes: "6:6:6:6"
 
   # Console presentation output.
-  output_directory: inference/outputs
+  output_directory: inference/outputs/fast_336

@@ -5,8 +5,11 @@
 #include <string>
 #include <vector>
 
+#include "model_profile.hpp"
+
 namespace locateanything {
 
+/** Visual embedding tensor and measured Vision execution time. */
 struct VisionResult {
   std::vector<uint8_t> visual_features_fp16;
   double elapsed_ms = 0.0;
@@ -14,14 +17,32 @@ struct VisionResult {
 
 class VisionEngine {
  public:
+  /** Create an uninitialized Vision engine. */
   VisionEngine();
+  /** Release the Vision HBM session. */
   ~VisionEngine();
+  /** Move-construct a Vision engine. */
   VisionEngine(VisionEngine&&) noexcept;
+  /** Move-assign a Vision engine. */
   VisionEngine& operator=(VisionEngine&&) noexcept;
+  /** Vision engines are non-copyable because they own runtime state. */
   VisionEngine(const VisionEngine&) = delete;
+  /** Vision engines are non-copy-assignable because they own runtime state. */
   VisionEngine& operator=(const VisionEngine&) = delete;
 
-  void Initialize(const std::string& model_path, uint32_t backend_mask);
+  /**
+   * @brief Load and validate the Vision HBM graph.
+   * @param model_path Explicit Vision HBM file path.
+   * @param backend_mask S600 BPU backend bit mask.
+   * @param profile Static Vision canvas and derived tensor contract.
+   */
+  void Initialize(const std::string& model_path, uint32_t backend_mask,
+                  const VisionProfile& profile);
+  /**
+   * @brief Execute Vision for one prepared FP16 patch tensor.
+   * @param patches FP16 bits in the configured static Vision input layout.
+   * @return FP16 visual features and measured execution time.
+   */
   VisionResult Infer(const std::vector<uint16_t>& patches);
 
  private:

@@ -10,6 +10,7 @@ from model.factory import (
     get_supported_marches,
     get_supported_models,
 )
+from model.contract import derive_vision_profile
 DEFAULT_COMPILE_KWARGS = {
     "march": "nash-p",
     "jobs": 16,
@@ -149,6 +150,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--image_width", type=int, default=672)
     parser.add_argument("--image_height", type=int, default=672)
+    parser.add_argument("--resize_mode", choices=("letterbox", "stretch"), default="letterbox")
+    parser.add_argument("--letterbox_fill", type=int, default=128)
     parser.add_argument("--device", type=validate_device, default=["cpu"])
     parser.add_argument("--w_bits", type=int, choices=[4, 8], default=8)
     parser.add_argument("--lm_head_w_bits", type=int, choices=[4, 8], default=8)
@@ -213,11 +216,15 @@ def validate_args(parser: argparse.ArgumentParser, args) -> None:
             parser.error(
                 "LocateAnything Vision release requires --calibration_scale_manifest"
             )
-        if (args.image_width, args.image_height) != (672, 672):
-            parser.error(
-                "LocateAnything Vision release requires "
-                "--image_width 672 --image_height 672"
+        try:
+            derive_vision_profile(
+                args.image_width,
+                args.image_height,
+                resize_mode=args.resize_mode,
+                letterbox_fill=args.letterbox_fill,
             )
+        except ValueError as exc:
+            parser.error(f"invalid LocateAnything Vision profile: {exc}")
         if args.w_bits != 8:
             parser.error("LocateAnything Vision release requires --w_bits 8")
     elif args.model_name == "locateanything-lm-3b":

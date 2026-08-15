@@ -172,6 +172,8 @@ def _build_locateanything_vit_3b(args):
         output_model_path=args.output_model_path,
         image_width=args.image_width,
         image_height=args.image_height,
+        resize_mode=args.resize_mode,
+        letterbox_fill=args.letterbox_fill,
         device=_primary_device(args),
         w_bits=args.w_bits,
         vit_core_num=args.vit_core_num,

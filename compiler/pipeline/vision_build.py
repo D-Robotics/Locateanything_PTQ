@@ -20,11 +20,10 @@ from hbdk4.compiler import load, save
 from hbdk4.compiler.hbm import Hbm, Hbo
 
 from model.base import Model
+from model.contract import derive_vision_profile
 from pipeline.progress import StageProgress  # noqa: E402
 
 
-INPUT_SHAPE = (1, 2304, 588)
-OUTPUT_SHAPE = (1, 576, 2048)
 IO_DTYPE = "float16"
 
 
@@ -64,7 +63,11 @@ def canonical_dtype(value: Any) -> str:
     raise RuntimeError(f"unsupported visual tensor dtype: {raw!r}")
 
 
-def validate_visual_function(function: Any) -> None:
+def validate_visual_function(
+    function: Any,
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+) -> None:
     """
     Function:
         Validate one Vision function's static input/output ABI.
@@ -82,14 +85,14 @@ def validate_visual_function(function: Any) -> None:
             "visual graph must expose one input and one output; "
             f"got {len(function.inputs)} and {len(function.outputs)}"
         )
-    input_shape = tuple(function.inputs[0].type.shape)
-    output_shape = tuple(function.outputs[0].type.shape)
+    actual_input_shape = tuple(function.inputs[0].type.shape)
+    actual_output_shape = tuple(function.outputs[0].type.shape)
     input_dtype = canonical_dtype(function.inputs[0])
     output_dtype = canonical_dtype(function.outputs[0])
-    if input_shape != INPUT_SHAPE or output_shape != OUTPUT_SHAPE:
+    if actual_input_shape != input_shape or actual_output_shape != output_shape:
         raise RuntimeError(
-            f"visual graph shape mismatch: input={input_shape} output={output_shape}; "
-            f"expected {INPUT_SHAPE} -> {OUTPUT_SHAPE}"
+            f"visual graph shape mismatch: input={actual_input_shape} "
+            f"output={actual_output_shape}; expected {input_shape} -> {output_shape}"
         )
     if input_dtype != IO_DTYPE or output_dtype != IO_DTYPE:
         raise RuntimeError(
@@ -98,7 +101,11 @@ def validate_visual_function(function: Any) -> None:
         )
 
 
-def validate_visual_bc(path: Path) -> None:
+def validate_visual_bc(
+    path: Path,
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+) -> None:
     """
     Function:
         Validate a source or converted Vision BC artifact.
@@ -117,17 +124,22 @@ def validate_visual_bc(path: Path) -> None:
         names = [str(function.name) for function in functions]
         raise RuntimeError(f"visual BC must contain only graph 'visual'; got {names}")
     function = functions[0]
-    validate_visual_function(function)
-    input_shape = tuple(function.inputs[0].type.shape)
-    output_shape = tuple(function.outputs[0].type.shape)
+    validate_visual_function(function, input_shape, output_shape)
+    actual_input_shape = tuple(function.inputs[0].type.shape)
+    actual_output_shape = tuple(function.outputs[0].type.shape)
     print(
-        f"[PASS] visual: input={input_shape}/{IO_DTYPE} "
-        f"output={output_shape}/{IO_DTYPE}",
+        f"[PASS] visual: input={actual_input_shape}/{IO_DTYPE} "
+        f"output={actual_output_shape}/{IO_DTYPE}",
         flush=True,
     )
 
 
-def valid_function(path: Path, expected_name: str) -> bool:
+def valid_function(
+    path: Path,
+    expected_name: str,
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+) -> bool:
     """
     Function:
         Check whether a converted Vision BC is readable and valid.
@@ -146,7 +158,7 @@ def valid_function(path: Path, expected_name: str) -> bool:
         functions = list(module.functions)
         if len(functions) != 1 or str(functions[0].name) != expected_name:
             return False
-        validate_visual_function(functions[0])
+        validate_visual_function(functions[0], input_shape, output_shape)
         return True
     except Exception:
         return False
@@ -172,7 +184,11 @@ def valid_hbo(path: Path) -> bool:
         return False
 
 
-def hbm_contract_matches(path: Path) -> bool:
+def hbm_contract_matches(
+    path: Path,
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+) -> bool:
     """
     Function:
         Validate the single ``visual`` graph in a Vision HBM.
@@ -193,13 +209,17 @@ def hbm_contract_matches(path: Path) -> bool:
         graph = graphs["visual"]
         if len(graph.inputs) != 1 or len(graph.outputs) != 1:
             return False
-        validate_visual_function(graph)
+        validate_visual_function(graph, input_shape, output_shape)
         return True
     except Exception:
         return False
 
 
-def valid_hbm(path: Path) -> bool:
+def valid_hbm(
+    path: Path,
+    input_shape: tuple[int, ...],
+    output_shape: tuple[int, ...],
+) -> bool:
     """
     Function:
         Check a Vision HBM artifact against its ABI.
@@ -210,7 +230,7 @@ def valid_hbm(path: Path) -> bool:
     Returns:
         True when the artifact is valid.
     """
-    return hbm_contract_matches(path)
+    return hbm_contract_matches(path, input_shape, output_shape)
 
 
 def parse_args() -> argparse.Namespace:
@@ -230,6 +250,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--march", default="nash-p")
     parser.add_argument("--core_num", type=int, choices=(1, 2, 4), default=4)
     parser.add_argument("--jobs", type=int, default=16)
+    parser.add_argument("--image_width", type=int, default=672)
+    parser.add_argument("--image_height", type=int, default=672)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--check_only", action="store_true")
     return parser.parse_args()
@@ -250,9 +272,12 @@ def main() -> int:
     args.bc_path = args.bc_path.resolve()
     args.hbm_path = args.hbm_path.resolve()
     args.hbm_path.parent.mkdir(parents=True, exist_ok=True)
+    vision_profile = derive_vision_profile(args.image_width, args.image_height)
+    input_shape = tuple(vision_profile["vision_input_shape"])
+    output_shape = tuple(vision_profile["projected_visual_shape"])
 
     heading("SOURCE CONTRACT")
-    validate_visual_bc(args.bc_path)
+    validate_visual_bc(args.bc_path, input_shape, output_shape)
     if args.check_only:
         heading("SOURCE CONTRACT PASSED")
         return 0
@@ -261,7 +286,9 @@ def main() -> int:
 
     converted_path = args.hbm_path.with_suffix(".visual_convert.bc")
     with progress.stage("Convert Vision graph"):
-        if args.resume and valid_function(converted_path, "visual"):
+        if args.resume and valid_function(
+            converted_path, "visual", input_shape, output_shape
+        ):
             print(f"[RESUME] converted visual: {converted_path}", flush=True)
         else:
             heading("CONVERT VISUAL")
@@ -280,7 +307,7 @@ def main() -> int:
             temporary = converted_path.with_name(converted_path.stem + ".partial.bc")
             save(converted, str(temporary))
             os.replace(temporary, converted_path)
-            validate_visual_bc(converted_path)
+            validate_visual_bc(converted_path, input_shape, output_shape)
             print(f"[PASS] converted visual: {converted_path}", flush=True)
 
     hbo_path = args.hbm_path.with_suffix(".visual.hbo")
@@ -312,14 +339,14 @@ def main() -> int:
             print(f"[PASS] HBO visual core={args.core_num}: {hbo_path}", flush=True)
 
     with progress.stage("Link Vision HBM"):
-        if args.resume and valid_hbm(args.hbm_path):
+        if args.resume and valid_hbm(args.hbm_path, input_shape, output_shape):
             print(f"[RESUME] HBM: {args.hbm_path}", flush=True)
         else:
             heading(f"LINK {args.hbm_path.name}")
             temporary = args.hbm_path.with_name(args.hbm_path.stem + ".partial.hbm")
             Model.link_models([Hbo(str(hbo_path))], str(temporary))
             os.replace(temporary, args.hbm_path)
-            if not hbm_contract_matches(args.hbm_path):
+            if not hbm_contract_matches(args.hbm_path, input_shape, output_shape):
                 raise RuntimeError(f"linked HBM graph contract mismatch: {args.hbm_path}")
             print(f"[PASS] HBM: {args.hbm_path}", flush=True)
     return 0

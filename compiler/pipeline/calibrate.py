@@ -44,6 +44,7 @@ from model.graphs import (  # noqa: E402
     calibration_execution_counts,
 )
 from model.rotation import load_hidden_rotation  # noqa: E402
+from model.contract import derive_vision_profile  # noqa: E402
 from pipeline.report import generate_activation_report  # noqa: E402
 
 
@@ -172,6 +173,54 @@ def progress(records: list[dict[str, Any]], description: str):
     return track(records, description, unit="sample")
 
 
+def validate_generated_profiles(
+    records: list[dict[str, Any]], args: argparse.Namespace
+) -> dict[str, Any]:
+    """Validate that all prepared records belong to the requested compiler profile."""
+
+    expected = derive_vision_profile(
+        args.image_width,
+        args.image_height,
+        resize_mode=args.resize_mode,
+        letterbox_fill=args.letterbox_fill,
+    )
+    expected.update({
+        "prefill_limit": args.chunk_size,
+        "remaining_prefill_tokens": args.chunk_size - expected["visual_token_count"],
+        "pbd_block_size": 6,
+    })
+    if expected["remaining_prefill_tokens"] <= 0:
+        raise RuntimeError(
+            f"chunk_size={args.chunk_size} leaves no text capacity after "
+            f"{expected['visual_token_count']} visual tokens"
+        )
+
+    reference = records[0].get("fixed_profile")
+    if not isinstance(reference, dict):
+        raise RuntimeError("generated calibration record has no fixed_profile")
+    for record in records:
+        profile = record.get("fixed_profile")
+        if profile != reference:
+            raise RuntimeError(
+                f"generated calibration profiles are inconsistent at {record.get('bundle_id')}"
+            )
+    drift = {
+        name: {"expected": value, "actual": reference.get(name)}
+        for name, value in expected.items()
+        if reference.get(name) != value
+    }
+    if drift:
+        raise RuntimeError(f"generated calibration profile mismatch: {drift}")
+    return dict(reference)
+
+
+def validate_tensor_profile(
+    payload: dict[str, Any], expected: dict[str, Any], bundle_id: str
+) -> None:
+    if payload.get("fixed_profile") != expected:
+        raise RuntimeError(f"prepared tensor profile mismatch for {bundle_id}")
+
+
 def run(args: argparse.Namespace) -> int:
     if args.max_samples <= 0:
         raise RuntimeError("activation calibration requires a positive sample count")
@@ -195,6 +244,7 @@ def run(args: argparse.Namespace) -> int:
 
     manifest = args.generated_jsonl.resolve()
     records = read_generated_manifest(manifest, args.max_samples)
+    fixed_profile = validate_generated_profiles(records, args)
     random.Random(args.replay_seed).shuffle(records)
     (
         configured_checkpoints,
@@ -234,7 +284,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"\n================== {vision_progress.upper()} ==================", flush=True)
         vision_api = LocateAnythingVisionApi(
             str(args.model_path.resolve()), str(output_dir / "vision_api"),
-            image_width=672, image_height=672, device=args.device,
+            image_width=args.image_width,
+            image_height=args.image_height,
+            resize_mode=args.resize_mode,
+            letterbox_fill=args.letterbox_fill,
+            device=args.device,
             w_bits=args.vision_w_bits,
             hidden_rotation_path=args.hidden_rotation_path, apply_hidden_rotation=True,
             export_only=True,
@@ -250,6 +304,7 @@ def run(args: argparse.Namespace) -> int:
         with torch.no_grad():
             for index, record in enumerate(progress(records, vision_progress), 1):
                 payload = load_tensor_payload(record)
+                validate_tensor_profile(payload, fixed_profile, record["bundle_id"])
                 vision_tracker.stage = "vision"
                 actual = vision(payload["vision_input"].to(device=device, dtype=dtype))
                 expected = (payload["projected_visual_features"].float() @ rotation).to(
@@ -298,6 +353,7 @@ def run(args: argparse.Namespace) -> int:
         with torch.no_grad():
             for index, record in enumerate(progress(records, language_progress), 1):
                 payload = load_tensor_payload(record)
+                validate_tensor_profile(payload, fixed_profile, record["bundle_id"])
                 replay_contexts = select_decode_replay_contexts(
                     payload,
                     task=record["task"],
@@ -426,6 +482,7 @@ def run(args: argparse.Namespace) -> int:
         "replay_seed": args.replay_seed,
         "task_counts": task_counts,
         "profile": {
+            **fixed_profile,
             "component": args.component,
             "chunk_size": args.chunk_size,
             "cache_len": args.cache_len,
@@ -611,6 +668,12 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--chunk-size", type=int, default=1024)
     result.add_argument("--cache-len", type=int, default=4096)
+    result.add_argument("--image-width", type=int, default=672)
+    result.add_argument("--image-height", type=int, default=672)
+    result.add_argument(
+        "--resize-mode", choices=("letterbox", "stretch"), default="letterbox"
+    )
+    result.add_argument("--letterbox-fill", type=int, default=128)
     result.add_argument("--vision-w-bits", type=int, choices=[8], default=8)
     result.add_argument("--language-w-bits", type=int, choices=[4, 8], default=8)
     result.add_argument("--lm-head-w-bits", type=int, choices=[4, 8], default=8)

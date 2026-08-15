@@ -2,8 +2,7 @@
 
 Mirrors locateanything_language.py but for the MoonViT vision tower.
 
-Produces:
-  LocateAnything-3B_vision_672x672_w8_nash-p_corenum_*.hbm
+Produces a statically shaped Vision HBM for the configured image canvas.
 """
 
 from __future__ import annotations
@@ -20,6 +19,11 @@ from safetensors import safe_open
 
 from model.base import standard_vit_name
 from model.layers import DynamicQuantLinear
+from model.contract import (
+    LETTERBOX_FILL,
+    RESIZE_MODE,
+    resolve_vision_scale_profile,
+)
 
 from model.config.locateanything_3b import (
     load_config_from_json,
@@ -112,6 +116,8 @@ class LocateAnythingVisionApi:
         output_model_path: str,
         image_width: int = 672,
         image_height: int = 672,
+        resize_mode: str = RESIZE_MODE,
+        letterbox_fill: int = LETTERBOX_FILL,
         device: str = "cpu",
         w_bits: int = 8,
         vit_core_num: Optional[list[int]] = None,
@@ -130,6 +136,8 @@ class LocateAnythingVisionApi:
             output_model_path: Directory for BC/HBO/HBM artifacts.
             image_width: Static image width.
             image_height: Static image height.
+            resize_mode: Input resize policy used during calibration.
+            letterbox_fill: RGB padding value used during calibration.
             device: Host device used during export preparation.
             w_bits: Vision weight width.
             vit_core_num: Vision BPU core list.
@@ -143,6 +151,8 @@ class LocateAnythingVisionApi:
         self.output_model_path = output_model_path
         self.image_width = image_width
         self.image_height = image_height
+        self.resize_mode = resize_mode
+        self.letterbox_fill = letterbox_fill
         self.device = device
         if w_bits != 8:
             raise ValueError(
@@ -284,8 +294,20 @@ class LocateAnythingVisionApi:
             )
         self._validate_weight_policy()
         from pipeline.replay import apply_scale_manifest
+        manifest = json.loads(Path(self.calibration_scale_manifest).read_text(encoding="utf-8"))
+        expected_scale_profile = resolve_vision_scale_profile(
+            manifest,
+            self.image_width,
+            self.image_height,
+            resize_mode=self.resize_mode,
+            letterbox_fill=self.letterbox_fill,
+            vision_weight_bits=self.w_bits,
+        )
         restored = apply_scale_manifest(
-            self.model, Path(self.calibration_scale_manifest), "vision"
+            self.model,
+            Path(self.calibration_scale_manifest),
+            "vision",
+            expected_profile=expected_scale_profile,
         )
         print(f"[LocateAnythingVisionApi] restored calibration: {restored}")
         self.model.compile_mode(True)

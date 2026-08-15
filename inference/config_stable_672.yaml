@@ -1,7 +1,7 @@
-# Standalone PTQ validation Console configuration.
+# Standalone stable_672 comparison Console configuration.
 # Paths are resolved from the directory where the Console is started.
 inference:
-  model_directory: inference/models
+  model_directory: inference/models/stable_672
   tokenizer_directory: inference/models/tokenizer
   vision_model: LocateAnything-3B_vision.hbm
   language_model: LocateAnything-3B_language.hbm
@@ -22,4 +22,4 @@ inference:
   l2m_sizes: "6:6:6:6"
 
   # Console presentation output.
-  output_directory: inference/outputs
+  output_directory: inference/outputs/stable_672

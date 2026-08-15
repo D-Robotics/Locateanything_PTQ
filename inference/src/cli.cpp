@@ -1,19 +1,21 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <opencv2/imgcodecs.hpp>
@@ -22,6 +24,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "inference.hpp"
+#include "model_profile.hpp"
 
 namespace fs = std::filesystem;
 
@@ -29,8 +32,20 @@ namespace {
 
 std::atomic<bool> stop_requested{false};
 
-void HandleSignal(int) { stop_requested = true; }
+/**
+ * @brief Convert SIGINT/SIGTERM into a cooperative Console shutdown request.
+ * @param signal_number POSIX signal number; its value does not change behavior.
+ */
+void HandleSignal(int signal_number) {
+  (void)signal_number;
+  stop_requested = true;
+}
 
+/**
+ * @brief Remove surrounding whitespace from an interactive Console command.
+ * @param value Raw command text.
+ * @return Trimmed command text.
+ */
 std::string Trim(std::string value) {
   const size_t first = value.find_first_not_of(" \t\r\n");
   if (first == std::string::npos) return {};
@@ -38,6 +53,12 @@ std::string Trim(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
+/**
+ * @brief Parse and validate the path argument following /image or /video.
+ * @param line Complete interactive command.
+ * @param command Matched command prefix.
+ * @return Unquoted non-empty media path.
+ */
 std::string PathArgument(const std::string& line, const std::string& command) {
   std::string value = Trim(line.substr(command.size()));
   if (value.size() >= 2 &&
@@ -49,6 +70,11 @@ std::string PathArgument(const std::string& line, const std::string& command) {
   return value;
 }
 
+/**
+ * @brief Check whether a line is one of the supported task commands.
+ * @param value Trimmed interactive command.
+ * @return True when a public LocateAnything task prefix matches.
+ */
 bool IsTaskCommand(const std::string& value) {
   static const std::string commands[] = {
       "/detect", "/ground", "/ground_single", "/gui", "/gui_box",
@@ -59,6 +85,12 @@ bool IsTaskCommand(const std::string& value) {
                      });
 }
 
+/**
+ * @brief Match a Console command exactly or with a space-delimited argument.
+ * @param value Trimmed interactive command.
+ * @param command Command prefix to match.
+ * @return True when value belongs to command.
+ */
 bool IsCommand(const std::string& value, const std::string& command) {
   return value == command || value.rfind(command + " ", 0) == 0;
 }
@@ -75,12 +107,20 @@ struct Colors {
   std::string red;
 };
 
+/**
+ * @brief Select ANSI colors only when output is an interactive terminal.
+ * @return Terminal palette, or empty strings for redirected output.
+ */
 Colors TerminalColors() {
   if (!isatty(STDOUT_FILENO) || std::getenv("NO_COLOR") != nullptr) return {};
   return {"\033[0m", "\033[1m", "\033[2m", "\033[36m", "\033[32m",
           "\033[33m", "\033[34m", "\033[35m", "\033[31m"};
 }
 
+/**
+ * @brief Print the fixed LocateAnything Console banner.
+ * @param color Terminal color palette, empty for plain output.
+ */
 void PrintBanner(const Colors& color) {
   static const char* lines[] = {
       "  ██╗      ██████╗  ██████╗ █████╗ ████████╗███████╗",
@@ -100,17 +140,21 @@ void PrintBanner(const Colors& color) {
   }
 }
 
+/**
+ * @brief Print interactive task, media, and session commands.
+ * @param color Terminal color palette, empty for plain output.
+ */
 void PrintHelp(const Colors& color) {
   std::cout << color.bold << color.cyan << "Tasks" << color.reset << '\n'
             << "  /detect cat,dog              目标检测\n"
-            << "  /ground <phrase>             指代表达，多目标\n"
-            << "  /ground_single <phrase>      指代表达，单目标\n"
-            << "  /gui <element>               GUI 点定位\n"
-            << "  /gui_box <element>           GUI 框定位\n"
+            << "  /ground <query>[,<query>...] 指代表达，多查询\n"
+            << "  /ground_single <query>[,...] 指代表达，单目标查询\n"
+            << "  /gui <query>[,<query>...]    GUI 点定位\n"
+            << "  /gui_box <query>[,<query>...] GUI 框定位\n"
             << "  /text                        文本 OCR\n"
-            << "  /ground_text <text>          指定文本定位\n"
+            << "  /ground_text <query>[,...]   指定文本定位\n"
             << "  /layout title,table,figure   文档版面分析\n"
-            << "  /point <target>              通用点定位\n"
+            << "  /point <query>[,<query>...]  通用点定位\n"
             << color.bold << color.cyan << "Session" << color.reset << '\n'
             << "  /image <image_path>          加载图片\n"
             << "  /video <video_path>          加载视频并处理全部帧\n"
@@ -127,6 +171,10 @@ struct ConsoleOptions {
   std::string vision_model = "LocateAnything-3B_vision.hbm";
   std::string language_model = "LocateAnything-3B_language.hbm";
   std::string embeddings = "LocateAnything-3B_embed_tokens.bin";
+  int image_width = 672;
+  int image_height = 672;
+  std::string resize_mode = "letterbox";
+  int letterbox_fill = 128;
   std::string generation_mode = "hybrid";
   std::string l2m_sizes = "6:6:6:6";
   int max_new_tokens = 4096;
@@ -135,10 +183,16 @@ struct ConsoleOptions {
   float nms_iou = 0.9f;
 };
 
+/** @brief Print the process-level command-line usage to standard output. */
 void PrintUsage() {
   std::cout << "usage: console [--config FILE]\n";
 }
 
+/**
+ * @brief Load standalone inference settings from an explicit YAML file.
+ * @param path Configuration file path.
+ * @param options Destination options initialized with defaults by the caller.
+ */
 void LoadConfig(const fs::path& path, ConsoleOptions* options) {
   YAML::Node root;
   try {
@@ -147,8 +201,7 @@ void LoadConfig(const fs::path& path, ConsoleOptions* options) {
     throw std::runtime_error("cannot read console config " + path.string() +
                              ": " + error.what());
   }
-  YAML::Node parameters = root["hobot_locateanything"]["ros__parameters"];
-  if (!parameters || !parameters.IsMap()) parameters = root["inference"];
+  YAML::Node parameters = root["inference"];
   if (!parameters || !parameters.IsMap()) {
     throw std::runtime_error("console config must contain an inference map");
   }
@@ -167,9 +220,19 @@ void LoadConfig(const fs::path& path, ConsoleOptions* options) {
   read_string("language_model", &options->language_model);
   read_string("embeddings", &options->embeddings);
   read_string("generation_mode", &options->generation_mode);
+  read_string("resize_mode", &options->resize_mode);
   read_string("l2m_sizes", &options->l2m_sizes);
   if (parameters["max_new_tokens"]) {
     options->max_new_tokens = parameters["max_new_tokens"].as<int>();
+  }
+  if (parameters["image_width"]) {
+    options->image_width = parameters["image_width"].as<int>();
+  }
+  if (parameters["image_height"]) {
+    options->image_height = parameters["image_height"].as<int>();
+  }
+  if (parameters["letterbox_fill"]) {
+    options->letterbox_fill = parameters["letterbox_fill"].as<int>();
   }
   if (parameters["vision_backend_mask"]) {
     options->vision_backend_mask =
@@ -184,6 +247,12 @@ void LoadConfig(const fs::path& path, ConsoleOptions* options) {
   }
 }
 
+/**
+ * @brief Parse --config and validate the resulting Console settings.
+ * @param argc Process argument count.
+ * @param argv Process argument values.
+ * @return Validated absolute-path Console settings.
+ */
 ConsoleOptions ParseArguments(int argc, char** argv) {
   ConsoleOptions options;
   options.config = "config.yaml";
@@ -219,14 +288,19 @@ ConsoleOptions ParseArguments(int argc, char** argv) {
   if (options.max_new_tokens <= 0) {
     throw std::invalid_argument("max_new_tokens in config must be positive");
   }
+  locateanything::VisionProfile(
+      options.image_width, options.image_height, options.resize_mode,
+      options.letterbox_fill);
   if (options.generation_mode != "hybrid" && options.generation_mode != "slow") {
     throw std::invalid_argument(
         "generation_mode in config must be hybrid or slow");
   }
   options.model_directory = fs::absolute(options.model_directory);
-  if (!options.tokenizer_directory.empty()) {
-    options.tokenizer_directory = fs::absolute(options.tokenizer_directory);
+  if (options.tokenizer_directory.empty()) {
+    throw std::invalid_argument(
+        "tokenizer_directory must be set explicitly in config");
   }
+  options.tokenizer_directory = fs::absolute(options.tokenizer_directory);
   options.output_directory = fs::absolute(options.output_directory);
   return options;
 }
@@ -243,24 +317,28 @@ struct Request {
   std::string command;
 };
 
-std::string Timestamp() {
-  const auto now = std::chrono::system_clock::now();
-  const std::time_t time = std::chrono::system_clock::to_time_t(now);
-  std::tm local{};
-  localtime_r(&time, &local);
-  std::ostringstream stream;
-  stream << std::put_time(&local, "%Y%m%d_%H%M%S");
-  return stream.str();
-}
-
-fs::path OutputPath(const ConsoleOptions& options, const std::string& type,
-                    uint64_t index) {
-  const fs::path path = options.output_directory /
-                        (type + "_" + Timestamp() + "_" + std::to_string(index));
+/**
+ * @brief Create the stable output directory for one media file.
+ * @param options Console settings containing the output root.
+ * @param source Input image or video path.
+ * @return Created output directory path.
+ */
+fs::path OutputPath(const ConsoleOptions& options, const fs::path& source) {
+  const std::string name = source.stem().string();
+  if (name.empty() || name == "." || name == "..") {
+    throw std::runtime_error("input file has no usable output name: " +
+                             source.string());
+  }
+  const fs::path path = options.output_directory / name;
   fs::create_directories(path);
   return path;
 }
 
+/**
+ * @brief Print compact performance and result summaries after one inference.
+ * @param output Shared-core inference output.
+ * @param color Terminal color palette, empty for plain output.
+ */
 void PrintPerformance(const locateanything::InferenceOutput& output,
                       const Colors& color) {
   const auto& metrics = output.metrics;
@@ -298,18 +376,20 @@ void PrintPerformance(const locateanything::InferenceOutput& output,
 
 class Console {
  public:
+  /**
+   * @brief Create a Console around the shared inference core.
+   * @param options Validated Console configuration.
+   */
   explicit Console(ConsoleOptions options)
       : options_(std::move(options)),
         color_(TerminalColors()),
         session_(BuildInferenceOptions()) {}
 
+  /** @brief Run initialization and the interactive loop until shutdown. */
   int Run() {
     PrintBanner(color_);
     const auto initialization_started = std::chrono::steady_clock::now();
-    PrintInitializationProgress("Starting", initialization_started);
-    session_.Initialize([&](const std::string& stage) {
-      PrintInitializationProgress(stage, initialization_started);
-    });
+    InitializeSession(initialization_started);
     PrintInitializationComplete(initialization_started);
     std::cout << color_.green << "Ready" << color_.reset
               << "  S600/Nash-P  |  " << options_.generation_mode
@@ -363,6 +443,60 @@ class Console {
   }
 
  private:
+  /**
+   * @brief Load both HBM files while a lightweight thread refreshes the UI.
+   * @param started Monotonic initialization start time.
+   */
+  void InitializeSession(
+      const std::chrono::steady_clock::time_point started) {
+    std::mutex state_mutex;
+    std::condition_variable state_changed;
+    bool loading = true;
+    std::string stage = "Starting";
+
+    std::thread renderer([&] {
+      std::unique_lock<std::mutex> lock(state_mutex);
+      while (loading) {
+        const std::string current_stage = stage;
+        lock.unlock();
+        PrintInitializationProgress(current_stage, started);
+        lock.lock();
+        state_changed.wait_for(lock, std::chrono::milliseconds(100), [&] {
+          return !loading || stage != current_stage;
+        });
+      }
+    });
+
+    try {
+      session_.Initialize([&](const std::string& current_stage) {
+        {
+          std::lock_guard<std::mutex> lock(state_mutex);
+          stage = current_stage;
+        }
+        state_changed.notify_one();
+      });
+    } catch (...) {
+      {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        loading = false;
+      }
+      state_changed.notify_one();
+      renderer.join();
+      throw;
+    }
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      loading = false;
+    }
+    state_changed.notify_one();
+    renderer.join();
+  }
+
+  /**
+   * @brief Render a moving initialization bar and elapsed seconds.
+   * @param stage Current model-loading stage.
+   * @param started Monotonic initialization start time.
+   */
   void PrintInitializationProgress(
       const std::string& stage,
       const std::chrono::steady_clock::time_point started) {
@@ -391,6 +525,10 @@ class Console {
               << " s" << std::flush;
   }
 
+  /**
+   * @brief Replace the moving bar with the final initialization status.
+   * @param started Monotonic initialization start time.
+   */
   void PrintInitializationComplete(
       const std::chrono::steady_clock::time_point started) const {
     const double elapsed = std::chrono::duration<double>(
@@ -402,19 +540,26 @@ class Console {
               << std::setprecision(1) << elapsed << " s\n";
   }
 
+  /**
+   * @brief Translate Console settings into shared inference options.
+   * @return Model paths and generation settings for InferenceSession.
+   */
   locateanything::InferenceOptions BuildInferenceOptions() const {
     locateanything::InferenceOptions inference;
-    setenv("HB_DNN_USER_DEFINED_L2M_SIZES", options_.l2m_sizes.c_str(), 1);
+    if (setenv("HB_DNN_USER_DEFINED_L2M_SIZES", options_.l2m_sizes.c_str(), 1) != 0) {
+      throw std::runtime_error("cannot configure S600 BPU L2 cache");
+    }
     inference.vision_model =
         (options_.model_directory / options_.vision_model).string();
     inference.language_model =
         (options_.model_directory / options_.language_model).string();
     inference.embeddings =
         (options_.model_directory / options_.embeddings).string();
-    fs::path tokenizer = options_.tokenizer_directory;
-    if (tokenizer.empty()) tokenizer = options_.model_directory / "tokenizer";
-    if (!fs::is_directory(tokenizer)) tokenizer = "models/tokenizer";
-    inference.tokenizer_directory = tokenizer.string();
+    inference.tokenizer_directory = options_.tokenizer_directory.string();
+    inference.image_width = options_.image_width;
+    inference.image_height = options_.image_height;
+    inference.resize_mode = options_.resize_mode;
+    inference.letterbox_fill = options_.letterbox_fill;
     inference.generation_mode = options_.generation_mode;
     inference.max_new_tokens = options_.max_new_tokens;
     inference.vision_backend_mask = options_.vision_backend_mask;
@@ -423,6 +568,10 @@ class Console {
     return inference;
   }
 
+  /**
+   * @brief Validate and remember one local image for the next task.
+   * @param value User-provided image path.
+   */
   void LoadImage(const std::string& value) {
     const fs::path path = fs::absolute(fs::path(value));
     if (!fs::is_regular_file(path) || cv::imread(path.string()).empty()) {
@@ -432,6 +581,10 @@ class Console {
     std::cout << color_.green << "Image loaded  " << color_.reset << path << '\n';
   }
 
+  /**
+   * @brief Validate and remember one local video for the next task.
+   * @param value User-provided video path.
+   */
   void LoadVideo(const std::string& value) {
     const fs::path path = fs::absolute(fs::path(value));
     cv::VideoCapture video(path.string());
@@ -447,6 +600,12 @@ class Console {
               << " frames\n";
   }
 
+  /**
+   * @brief Dispatch a task to the selected local-media path.
+   * @param media Selected image or video.
+   * @param command Public LocateAnything task command.
+   * @param remember Store this request for `regen` when true.
+   */
   void Execute(const Media& media, const std::string& command, bool remember) {
     if (remember) {
       last_request_ = {media, command};
@@ -461,15 +620,21 @@ class Console {
     }
   }
 
+  /**
+   * @brief Run one local image and save annotated image and JSON result.
+   * @param path Validated image path.
+   * @param command Public LocateAnything task command.
+   */
   void RunImage(const fs::path& path, const std::string& command) {
     const cv::Mat image = cv::imread(path.string());
     if (image.empty()) throw std::runtime_error("failed to read image: " + path.string());
     locateanything::InferenceOutputOptions output_options;
     output_options.render_annotated = true;
     output_options.serialize_json = true;
+    output_options.pretty_json = true;
     locateanything::InferenceOutput output =
         session_.Infer(image, command, 1, output_options);
-    const fs::path directory = OutputPath(options_, "image", ++request_index_);
+    const fs::path directory = OutputPath(options_, path);
     const fs::path annotated = directory / "annotated.jpg";
     const fs::path prediction = directory / "prediction.json";
     if (!cv::imwrite(annotated.string(), output.annotated_image)) {
@@ -482,6 +647,11 @@ class Console {
               << "  JSON   " << prediction << "\n\n";
   }
 
+  /**
+   * @brief Run every local-video frame and save media plus reports.
+   * @param path Validated video path.
+   * @param command Public LocateAnything task command applied to every frame.
+   */
   void RunVideo(const fs::path& path, const std::string& command) {
     cv::VideoCapture video(path.string());
     if (!video.isOpened()) throw std::runtime_error("failed to open video: " + path.string());
@@ -491,7 +661,7 @@ class Console {
     double fps = video.get(cv::CAP_PROP_FPS);
     if (!(fps > 0.0)) fps = 25.0;
 
-    const fs::path directory = OutputPath(options_, "video", ++request_index_);
+    const fs::path directory = OutputPath(options_, path);
     fs::path annotated = directory / "annotated.mp4";
     cv::VideoWriter writer(annotated.string(), cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
                            fps, cv::Size(width, height));
@@ -554,12 +724,17 @@ class Console {
   Media media_;
   Request last_request_;
   bool has_last_request_ = false;
-  uint64_t request_index_ = 0;
   std::string loading_stage_;
 };
 
 }  // namespace
 
+/**
+ * @brief Run the independent local-media Console process.
+ * @param argc Process argument count.
+ * @param argv Process argument values.
+ * @return Zero after normal shutdown, or one after a fatal error.
+ */
 int main(int argc, char** argv) {
   try {
     std::signal(SIGINT, HandleSignal);

@@ -8,8 +8,11 @@
 namespace locateanything {
 namespace {
 
-constexpr int kVisualTokens = 576;
-
+/**
+ * @brief Remove leading and trailing whitespace from a task command.
+ * @param value Raw command text.
+ * @return Trimmed command text.
+ */
 std::string Trim(std::string value) {
   const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char item) {
     return std::isspace(item) != 0;
@@ -20,6 +23,12 @@ std::string Trim(std::string value) {
   return first < last ? std::string(first, last) : std::string{};
 }
 
+/**
+ * @brief Extract and validate the argument after a public command prefix.
+ * @param command Complete normalized command.
+ * @param prefix Matched command prefix.
+ * @return Non-empty argument without a trailing period.
+ */
 std::string Argument(const std::string& command, const std::string& prefix) {
   std::string value = Trim(command.substr(prefix.size()));
   if (!value.empty() && value.back() == '.') value.pop_back();
@@ -28,6 +37,11 @@ std::string Argument(const std::string& command, const std::string& prefix) {
   return value;
 }
 
+/**
+ * @brief Convert comma-separated categories into model category markup.
+ * @param value User-provided category list.
+ * @return Non-empty `</c>`-delimited model text.
+ */
 std::string Categories(const std::string& value) {
   std::string result;
   size_t start = 0;
@@ -45,11 +59,20 @@ std::string Categories(const std::string& value) {
   return result;
 }
 
+/**
+ * @brief Check whether a normalized command belongs to a task prefix.
+ * @param value Normalized complete command.
+ * @param command Task prefix.
+ * @return True for an exact match or a space-delimited argument.
+ */
 bool IsCommand(const std::string& value, const std::string& command) {
   return value == command || value.rfind(command + " ", 0) == 0;
 }
 
 }  // namespace
+
+PromptBuilder::PromptBuilder(const VisionProfile& profile)
+    : visual_tokens_(profile.visual_token_count()) {}
 
 Prompt PromptBuilder::Build(const std::string& command) const {
   const std::string raw = Trim(command);
@@ -96,7 +119,7 @@ Prompt PromptBuilder::Build(const std::string& command) const {
   }
 
   std::string image = "<image 1><img>";
-  for (int index = 0; index < kVisualTokens; ++index) image += "<IMG_CONTEXT>";
+  for (int index = 0; index < visual_tokens_; ++index) image += "<IMG_CONTEXT>";
   image += "</img>";
   output.model_input =
       "<|im_start|>system\nYou are a helpful assistant.\n<|im_end|>\n"

@@ -14,8 +14,9 @@ Required variables:
   CHECKPOINT_SAMPLES    convergence checkpoint below MAX_SAMPLES
 
 Optional variables include REPO_ROOT, PYTHON_BIN, REPLAY_SCRIPT, DEVICE, DTYPE,
-IMAGE_TOKEN_ID, HIDDEN_ROTATION_PATH, JOB_NAME, LOG_PATH, EXIT_PATH, META_PATH,
-RESUME, DETACH, and DETAILED_STATISTICS.
+IMAGE_WIDTH, IMAGE_HEIGHT, RESIZE_MODE, LETTERBOX_FILL, IMAGE_TOKEN_ID,
+HIDDEN_ROTATION_PATH, JOB_NAME, LOG_PATH, EXIT_PATH, META_PATH, RESUME, DETACH,
+and DETAILED_STATISTICS.
 EOF
   exit 0
 fi
@@ -31,6 +32,10 @@ DEVICE=${DEVICE:-cuda:0}
 DTYPE=${DTYPE:-float16}
 CHUNK_SIZE=${CHUNK_SIZE:-1024}
 CACHE_LEN=${CACHE_LEN:-4096}
+IMAGE_WIDTH=${IMAGE_WIDTH:-672}
+IMAGE_HEIGHT=${IMAGE_HEIGHT:-672}
+RESIZE_MODE=${RESIZE_MODE:-letterbox}
+LETTERBOX_FILL=${LETTERBOX_FILL:-128}
 CALIBRATION_COMPONENT=${CALIBRATION_COMPONENT:-all}
 VISION_W_BITS=${VISION_W_BITS:-8}
 LANGUAGE_W_BITS=${LANGUAGE_W_BITS:-8}
@@ -106,7 +111,8 @@ write_initial_metadata() {
     "$DEVICE" "$DTYPE" "$CHUNK_SIZE" "$CACHE_LEN" "$MAX_SAMPLES" \
     "$CHECKPOINT_SAMPLES" "$IMAGE_TOKEN_ID" "$CALIBRATION_COMPONENT" \
     "$VISION_W_BITS" "$LANGUAGE_W_BITS" "$LM_HEAD_W_BITS" "$REPLAY_SEED" \
-  "$HIDDEN_ROTATION_PATH" "$LOG_PATH" "$DETAILED_STATISTICS" "$REPO_ROOT" <<'PY'
+    "$IMAGE_WIDTH" "$IMAGE_HEIGHT" "$RESIZE_MODE" "$LETTERBOX_FILL" \
+    "$HIDDEN_ROTATION_PATH" "$LOG_PATH" "$DETAILED_STATISTICS" "$REPO_ROOT" <<'PY'
 import json
 import os
 import socket
@@ -116,7 +122,8 @@ from pathlib import Path
 (
     path, started_at, generated, selected, model, output, replay, device,
     dtype, chunk, cache, max_samples, checkpoint, image_token, component,
-    vision_w_bits, language_w_bits, lm_head_w_bits, replay_seed, rotation,
+    vision_w_bits, language_w_bits, lm_head_w_bits, replay_seed,
+    image_width, image_height, resize_mode, letterbox_fill, rotation,
     log_path, detailed_statistics, repo_root,
 ) = sys.argv[1:]
 sys.path.insert(0, str(Path(repo_root) / "compiler"))
@@ -145,6 +152,10 @@ value = {
     "dtype": dtype,
     "chunk_size": int(chunk),
     "cache_len": int(cache),
+    "image_width": int(image_width),
+    "image_height": int(image_height),
+    "resize_mode": resize_mode,
+    "letterbox_fill": int(letterbox_fill),
     "max_samples": int(max_samples),
     "checkpoint_samples": int(checkpoint),
     "image_token_id": int(image_token),
@@ -222,7 +233,7 @@ write_exit_record running
 write_initial_metadata
 
 echo "[calibrate] manifest=$GENERATED_JSONL" | tee -a "$LOG_PATH"
-echo "[calibrate] output=$OUTPUT_DIR component=$CALIBRATION_COMPONENT device=$DEVICE dtype=$DTYPE samples=$MAX_SAMPLES checkpoint=$CHECKPOINT_SAMPLES vision_w_bits=$VISION_W_BITS language_w_bits=$LANGUAGE_W_BITS lm_head_w_bits=$LM_HEAD_W_BITS detailed_statistics=$DETAILED_STATISTICS replay_seed=$REPLAY_SEED" | tee -a "$LOG_PATH"
+echo "[calibrate] output=$OUTPUT_DIR component=$CALIBRATION_COMPONENT device=$DEVICE dtype=$DTYPE samples=$MAX_SAMPLES checkpoint=$CHECKPOINT_SAMPLES image=${IMAGE_WIDTH}x${IMAGE_HEIGHT} resize=$RESIZE_MODE fill=$LETTERBOX_FILL vision_w_bits=$VISION_W_BITS language_w_bits=$LANGUAGE_W_BITS lm_head_w_bits=$LM_HEAD_W_BITS detailed_statistics=$DETAILED_STATISTICS replay_seed=$REPLAY_SEED" | tee -a "$LOG_PATH"
 
 replay_args=(
   --generated-jsonl "$GENERATED_JSONL"
@@ -234,6 +245,10 @@ replay_args=(
   --component "$CALIBRATION_COMPONENT"
   --chunk-size "$CHUNK_SIZE"
   --cache-len "$CACHE_LEN"
+  --image-width "$IMAGE_WIDTH"
+  --image-height "$IMAGE_HEIGHT"
+  --resize-mode "$RESIZE_MODE"
+  --letterbox-fill "$LETTERBOX_FILL"
   --vision-w-bits "$VISION_W_BITS"
   --language-w-bits "$LANGUAGE_W_BITS"
   --lm-head-w-bits "$LM_HEAD_W_BITS"

@@ -32,6 +32,7 @@ if str(COMPILER_ROOT) not in sys.path:
     sys.path.insert(0, str(COMPILER_ROOT))
 
 from pipeline.progress import track  # noqa: E402
+from model.contract import derive_vision_profile  # noqa: E402
 
 
 SCHEMA_VERSION = 2
@@ -439,67 +440,27 @@ def response_token_ids(tokenizer: Any, response: str) -> list[int]:
 
 
 def build_fixed_profile(args: argparse.Namespace) -> dict[str, Any]:
-    if args.image_width <= 0 or args.image_height <= 0:
-        raise ValueError("image dimensions must be positive")
-    if args.patch_size <= 0 or args.merge_size <= 0:
-        raise ValueError("patch_size and merge_size must be positive")
-    if not 0 <= args.letterbox_fill <= 255:
-        raise ValueError("letterbox_fill must be within [0, 255]")
-    release_contract = {
-        "image_width": 672,
-        "image_height": 672,
-        "resize_mode": "letterbox",
-        "letterbox_fill": 128,
-        "patch_size": 14,
-        "merge_size": 2,
-        "hidden_size": 2048,
-        "prefill_limit": 1024,
-    }
-    drift = {
-        name: getattr(args, name)
-        for name, expected in release_contract.items()
-        if getattr(args, name) != expected
-    }
-    if drift:
-        raise ValueError(f"Prepare arguments drift from the release contract: {drift}")
-
-    profile_multiple = args.patch_size * args.merge_size
-    if args.image_width % profile_multiple or args.image_height % profile_multiple:
-        raise ValueError(
-            f"image dimensions must be divisible by patch_size * merge_size "
-            f"({profile_multiple})"
-        )
-
-    grid_width = args.image_width // args.patch_size
-    grid_height = args.image_height // args.patch_size
-    patch_count = grid_width * grid_height
-    merge_area = args.merge_size * args.merge_size
-    if patch_count % merge_area:
-        raise ValueError("patch count must be divisible by the merge area")
-    visual_token_count = patch_count // merge_area
+    profile = derive_vision_profile(
+        args.image_width,
+        args.image_height,
+        resize_mode=args.resize_mode,
+        letterbox_fill=args.letterbox_fill,
+        patch_size=args.patch_size,
+        spatial_merge=args.merge_size,
+        hidden_size=args.hidden_size,
+    )
+    visual_token_count = int(profile["visual_token_count"])
     if args.prefill_limit <= visual_token_count:
         raise ValueError(
             f"prefill_limit={args.prefill_limit} leaves no text capacity after "
             f"{visual_token_count} visual tokens"
         )
-
-    patch_flat_dim = 3 * args.patch_size * args.patch_size
-    return {
-        "image_width": args.image_width,
-        "image_height": args.image_height,
-        "resize_mode": args.resize_mode,
-        "letterbox_fill": args.letterbox_fill,
-        "patch_size": args.patch_size,
-        "merge_size": args.merge_size,
-        "grid_hw": [grid_height, grid_width],
-        "patch_count": patch_count,
-        "vision_input_shape": [1, patch_count, patch_flat_dim],
-        "visual_token_count": visual_token_count,
-        "projected_visual_shape": [1, visual_token_count, args.hidden_size],
+    profile.update({
         "prefill_limit": args.prefill_limit,
         "remaining_prefill_tokens": args.prefill_limit - visual_token_count,
         "pbd_block_size": 6,
-    }
+    })
+    return profile
 
 
 def prepare_profile_image(
@@ -703,17 +664,20 @@ def save_tensor_artifact(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f"{path.name}.tmp")
+    vision_input = payload["vision_input"]
+    expected_shape = tuple(payload["fixed_profile"]["vision_input_shape"])
+    if tuple(vision_input.shape) != expected_shape:
+        raise ValueError(
+            f"vision_input shape is {tuple(vision_input.shape)}, expected {expected_shape}"
+        )
     if output_format == "pt":
         torch_module.save(payload, temporary)
     elif output_format == "npy":
-        vision_input = payload["vision_input"]
         if vision_input.dtype != torch_module.float16:
             raise TypeError(
                 f"vision_input dtype is {vision_input.dtype}, expected torch.float16"
             )
         value = vision_input.detach().cpu().numpy()
-        if tuple(value.shape) != (1, 2304, 588):
-            raise ValueError(f"vision_input shape is {value.shape}, expected (1, 2304, 588)")
         if not np.isfinite(value).all():
             raise ValueError("vision_input contains NaN or Inf")
         with temporary.open("wb") as handle:

@@ -1,4 +1,4 @@
-"""Fixed LocateAnything-3B compiler and Language graph specification."""
+"""LocateAnything-3B architecture constants and derived compiler profiles."""
 
 from __future__ import annotations
 
@@ -25,6 +25,109 @@ LANGUAGE_HEAD_DIM = 128
 LANGUAGE_CACHE_TENSOR_COUNT = LANGUAGE_LAYER_COUNT * 2
 LANGUAGE_INPUT_COUNT = 3 + LANGUAGE_CACHE_TENSOR_COUNT
 LANGUAGE_OUTPUT_COUNT = 1 + LANGUAGE_CACHE_TENSOR_COUNT
+
+
+def derive_vision_profile(
+    image_width: int,
+    image_height: int,
+    *,
+    resize_mode: str = RESIZE_MODE,
+    letterbox_fill: int = LETTERBOX_FILL,
+    patch_size: int = PATCH_SIZE,
+    spatial_merge: int = SPATIAL_MERGE,
+    hidden_size: int = HIDDEN_SIZE,
+    channels: int = 3,
+) -> dict[str, Any]:
+    """Derive static MoonViT tensor shapes from one configurable canvas."""
+
+    integer_fields = {
+        "image_width": image_width,
+        "image_height": image_height,
+        "patch_size": patch_size,
+        "spatial_merge": spatial_merge,
+        "hidden_size": hidden_size,
+        "channels": channels,
+    }
+    invalid = {
+        name: value
+        for name, value in integer_fields.items()
+        if type(value) is not int or value <= 0
+    }
+    if invalid:
+        raise ValueError(f"Vision profile values must be positive integers: {invalid}")
+    if resize_mode not in {"letterbox", "stretch"}:
+        raise ValueError("resize_mode must be letterbox or stretch")
+    if type(letterbox_fill) is not int or not 0 <= letterbox_fill <= 255:
+        raise ValueError("letterbox_fill must be an integer within [0, 255]")
+
+    profile_multiple = patch_size * spatial_merge
+    if image_width % profile_multiple or image_height % profile_multiple:
+        raise ValueError(
+            "image dimensions must be divisible by patch_size * spatial_merge "
+            f"({profile_multiple})"
+        )
+
+    grid_width = image_width // patch_size
+    grid_height = image_height // patch_size
+    patch_count = grid_width * grid_height
+    merge_area = spatial_merge * spatial_merge
+    if patch_count % merge_area:
+        raise ValueError("patch count must be divisible by the spatial merge area")
+    visual_token_count = patch_count // merge_area
+    patch_flat_dim = channels * patch_size * patch_size
+    return {
+        "image_width": image_width,
+        "image_height": image_height,
+        "resize_mode": resize_mode,
+        "letterbox_fill": letterbox_fill,
+        "patch_size": patch_size,
+        "merge_size": spatial_merge,
+        "grid_hw": [grid_height, grid_width],
+        "patch_count": patch_count,
+        "vision_input_shape": [1, patch_count, patch_flat_dim],
+        "visual_token_count": visual_token_count,
+        "projected_visual_shape": [1, visual_token_count, hidden_size],
+    }
+
+
+def resolve_vision_scale_profile(
+    manifest: Mapping[str, Any],
+    image_width: int,
+    image_height: int,
+    *,
+    resize_mode: str = RESIZE_MODE,
+    letterbox_fill: int = LETTERBOX_FILL,
+    vision_weight_bits: int = 8,
+) -> dict[str, Any]:
+    """Bind a Vision scale manifest to the requested preprocessing and graph ABI."""
+
+    expected_vision = derive_vision_profile(
+        image_width,
+        image_height,
+        resize_mode=resize_mode,
+        letterbox_fill=letterbox_fill,
+    )
+    raw_profile = manifest.get("profile")
+    manifest_profile = raw_profile if isinstance(raw_profile, Mapping) else {}
+    vision_keys = set(expected_vision)
+    present_keys = vision_keys & set(manifest_profile)
+    if present_keys and present_keys != vision_keys:
+        missing = sorted(vision_keys - present_keys)
+        raise ValueError(f"scale manifest has an incomplete Vision profile: {missing}")
+    if not present_keys and (
+        image_width != IMAGE_WIDTH
+        or image_height != IMAGE_HEIGHT
+        or resize_mode != RESIZE_MODE
+        or letterbox_fill != LETTERBOX_FILL
+    ):
+        raise ValueError(
+            "legacy scale manifests without a Vision profile may only be used "
+            f"with {IMAGE_WIDTH}x{IMAGE_HEIGHT} {RESIZE_MODE} fill={LETTERBOX_FILL}"
+        )
+    expected_scale_profile = {"vision_weight_bits": vision_weight_bits}
+    if present_keys:
+        expected_scale_profile.update(expected_vision)
+    return expected_scale_profile
 
 
 def language_query_length(graph: str, chunk_size: int) -> int:

@@ -15,18 +15,35 @@ find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs videoio)
 find_package(Threads REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-find_path(HOBOT_INCLUDE_DIR hobot/dnn/hb_dnn.h
-  PATHS /usr/include /usr/local/include)
-find_library(HBDNN_LIB dnn PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBUCP_LIB hbucp PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBRT4_LIB hbrt4 PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBTL_LIB hbtl PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBDSP_PLUGIN_LIB hbdsp_plugin
-  PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBHPL_LIB hbhpl PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
-find_library(HBVP_LIB hbvp PATHS /usr/hobot/lib /usr/lib /usr/lib/aarch64-linux-gnu)
+set(HOBOT_INCLUDE_PATHS
+  ${CMAKE_SYSROOT}/usr/hobot/include
+  ${CMAKE_SYSROOT}/usr/include
+  /usr/hobot/include
+  /usr/include
+  /usr/local/include)
+set(HOBOT_LIBRARY_PATHS
+  ${CMAKE_SYSROOT}/usr/hobot/lib
+  ${CMAKE_SYSROOT}/usr/lib/hbbpu
+  ${CMAKE_SYSROOT}/usr/lib/aarch64-linux-gnu
+  ${CMAKE_SYSROOT}/usr/lib
+  /usr/hobot/lib
+  /usr/lib/hbbpu
+  /usr/lib/aarch64-linux-gnu
+  /usr/lib)
+
+find_path(HOBOT_INCLUDE_DIR hobot/dnn/hb_dnn.h PATHS ${HOBOT_INCLUDE_PATHS})
+find_library(HBDNN_LIB dnn PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBUCP_LIB hbucp PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBRT4_LIB hbrt4 PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBTL_LIB hbtl PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBDSP_PLUGIN_LIB hbdsp_plugin PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBHPL_LIB hbhpl PATHS ${HOBOT_LIBRARY_PATHS})
+find_library(HBVP_LIB hbvp PATHS ${HOBOT_LIBRARY_PATHS})
 if(NOT HOBOT_INCLUDE_DIR)
   message(FATAL_ERROR "hobot/dnn/hb_dnn.h not found; build in the OELLM/S600 environment")
+endif()
+if(NOT HBDNN_LIB)
+  message(FATAL_ERROR "libdnn not found; build in the OELLM/S600 environment")
 endif()
 
 set(HOBOT_RUNTIME_LIBS)

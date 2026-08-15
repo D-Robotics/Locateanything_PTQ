@@ -14,10 +14,10 @@ COMPILER_SRC="${COMPILER_SRC:-$REPO_ROOT/compiler}"
 MODEL_NAME="${MODEL_NAME:-locateanything-vit-3b}"
 MARCH="${MARCH:?set by compiler/quantize.py}"
 W_BITS="${W_BITS:?set by compiler/quantize.py}"
-# The release profile is a fixed 672x672 canvas: 2304 patches -> 576 tokens.
-# Source images are letterboxed by the calibration/runtime preprocessor.
 IMAGE_WIDTH="${IMAGE_WIDTH:?set by compiler/quantize.py}"
 IMAGE_HEIGHT="${IMAGE_HEIGHT:?set by compiler/quantize.py}"
+RESIZE_MODE="${RESIZE_MODE:?set by compiler/quantize.py}"
+LETTERBOX_FILL="${LETTERBOX_FILL:?set by compiler/quantize.py}"
 DEVICE="${DEVICE:?set by compiler/quantize.py}"
 VIT_CORE_NUM="${VIT_CORE_NUM:?set by compiler/quantize.py}"
 JOBS="${JOBS:?set by compiler/quantize.py}"
@@ -88,6 +88,8 @@ STAGE_ARGS=(
   --march "$MARCH"
   --core_num "$VIT_CORE_NUM"
   --jobs "$JOBS"
+  --image_width "$IMAGE_WIDTH"
+  --image_height "$IMAGE_HEIGHT"
 )
 validate_bc() {
   env PYTHONPATH="$COMPILER_SRC${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" \
@@ -114,6 +116,8 @@ export_bc() {
     --w_bits "$W_BITS" \
     --image_width "$IMAGE_WIDTH" \
     --image_height "$IMAGE_HEIGHT" \
+    --resize_mode "$RESIZE_MODE" \
+    --letterbox_fill "$LETTERBOX_FILL" \
     --calibration_scale_manifest "$CALIBRATION_SCALE_MANIFEST" \
     --device "$DEVICE" \
     --vit_core_num "$VIT_CORE_NUM" \

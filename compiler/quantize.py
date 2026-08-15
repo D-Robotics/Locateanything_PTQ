@@ -39,14 +39,11 @@ from pipeline.progress import (  # noqa: E402
 )
 from model.contract import (  # noqa: E402
     HIDDEN_SIZE,
-    IMAGE_HEIGHT,
     IMAGE_TOKEN_ID,
-    IMAGE_WIDTH,
-    LETTERBOX_FILL,
     PATCH_SIZE,
     PBD_QUERY_LEN,
-    RESIZE_MODE,
     SPATIAL_MERGE,
+    derive_vision_profile,
 )
 CONVERGENCE_CHECKPOINTS = (64, 128, 256, 512)
 
@@ -131,10 +128,11 @@ def validate_config(config: Mapping[str, Any]) -> None:
         None.
     """
     required_sections = {
-        "paths", "outputs", "calibration", "language", "quantization", "build",
+        "paths", "outputs", "calibration", "vision", "language", "quantization", "build",
     }
+    optional_sections = {"runtime"}
     missing_sections = sorted(required_sections - config.keys())
-    extra_sections = sorted(set(config) - required_sections)
+    extra_sections = sorted(set(config) - required_sections - optional_sections)
     if missing_sections:
         raise ConfigurationError(f"config is missing: {', '.join(missing_sections)}")
     if extra_sections:
@@ -193,6 +191,25 @@ def validate_config(config: Mapping[str, Any]) -> None:
     if type(calibration.get("detailed_statistics")) is not bool:
         raise ConfigurationError("calibration.detailed_statistics must be true or false")
 
+    vision = _mapping(config.get("vision"), "vision")
+    required_vision = {
+        "image_width", "image_height", "resize_mode", "letterbox_fill",
+    }
+    if set(vision) != required_vision:
+        missing = sorted(required_vision - set(vision))
+        extra = sorted(set(vision) - required_vision)
+        details = [*(f"missing {name}" for name in missing), *(f"unknown {name}" for name in extra)]
+        raise ConfigurationError("invalid vision fields: " + ", ".join(details))
+    try:
+        vision_profile = derive_vision_profile(
+            vision.get("image_width"),
+            vision.get("image_height"),
+            resize_mode=vision.get("resize_mode"),
+            letterbox_fill=vision.get("letterbox_fill"),
+        )
+    except ValueError as exc:
+        raise ConfigurationError(f"invalid vision profile: {exc}") from exc
+
     language = _mapping(config.get("language"), "language")
     required_language = {"chunk_size", "cache_len"}
     if set(language) != required_language:
@@ -211,6 +228,28 @@ def validate_config(config: Mapping[str, Any]) -> None:
             "language.chunk_size and language.cache_len must be multiples of 64, "
             "with cache_len greater than chunk_size"
         )
+    if vision_profile["visual_token_count"] >= chunk_size:
+        raise ConfigurationError(
+            f"vision produces {vision_profile['visual_token_count']} visual tokens, "
+            f"leaving no text capacity in language.chunk_size={chunk_size}"
+        )
+
+    runtime = config.get("runtime")
+    if runtime is not None:
+        runtime = _mapping(runtime, "runtime")
+        if set(runtime) != {"max_new_tokens"}:
+            missing = sorted({"max_new_tokens"} - set(runtime))
+            extra = sorted(set(runtime) - {"max_new_tokens"})
+            details = [*(f"missing {name}" for name in missing), *(f"unknown {name}" for name in extra)]
+            raise ConfigurationError("invalid runtime fields: " + ", ".join(details))
+        runtime_max_new_tokens = _positive_int(
+            runtime.get("max_new_tokens"), "runtime.max_new_tokens"
+        )
+        if chunk_size + runtime_max_new_tokens > cache_len:
+            raise ConfigurationError(
+                "language.chunk_size + runtime.max_new_tokens must not exceed "
+                f"language.cache_len ({chunk_size} + {runtime_max_new_tokens} > {cache_len})"
+            )
     quantization = _mapping(config.get("quantization"), "quantization")
     required_quantization = {
         "vision_weight_bits", "language_weight_bits", "lm_head_weight_bits"
@@ -431,6 +470,18 @@ def common_env(config: Mapping[str, Any], progress: str) -> dict[str, str]:
     return env
 
 
+def configured_vision_profile(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return tensor shapes derived from the YAML Vision canvas."""
+
+    vision = _mapping(config["vision"], "vision")
+    return derive_vision_profile(
+        vision["image_width"],
+        vision["image_height"],
+        resize_mode=vision["resize_mode"],
+        letterbox_fill=vision["letterbox_fill"],
+    )
+
+
 def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[PlanStep]:
     """
     Function:
@@ -446,6 +497,7 @@ def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Pl
     calibration = _mapping(config["calibration"], "calibration")
     language = _mapping(config["language"], "language")
     build = _mapping(config["build"], "build")
+    vision = configured_vision_profile(config)
     selected = resolve_path(config, "selected_jsonl")
     output_dir = resolve_path(config, "generated_dir")
     log_root = resolve_path(config, "log_root")
@@ -456,10 +508,10 @@ def prepare_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Pl
         "MODEL_PATH": str(resolve_path(config, "model")),
         "DEVICE": str(build["device"]),
         "DTYPE": str(calibration["prepare_dtype"]),
-        "IMAGE_WIDTH": str(IMAGE_WIDTH),
-        "IMAGE_HEIGHT": str(IMAGE_HEIGHT),
-        "RESIZE_MODE": RESIZE_MODE,
-        "LETTERBOX_FILL": str(LETTERBOX_FILL),
+        "IMAGE_WIDTH": str(vision["image_width"]),
+        "IMAGE_HEIGHT": str(vision["image_height"]),
+        "RESIZE_MODE": str(vision["resize_mode"]),
+        "LETTERBOX_FILL": str(vision["letterbox_fill"]),
         "PATCH_SIZE": str(PATCH_SIZE),
         "MERGE_SIZE": str(SPATIAL_MERGE),
         "HIDDEN_SIZE": str(HIDDEN_SIZE),
@@ -493,6 +545,7 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
     build = _mapping(config["build"], "build")
+    vision = configured_vision_profile(config)
     generated_jsonl = resolve_path(config, "generated_jsonl")
     requested_samples = calibration_sample_count(config, generated_jsonl, args.max_samples)
     requested_checkpoint = calibration_checkpoint(
@@ -510,6 +563,10 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
         "CALIBRATION_COMPONENT": "all" if args.component == "all" else args.component,
         "CHUNK_SIZE": str(language["chunk_size"]),
         "CACHE_LEN": str(language["cache_len"]),
+        "IMAGE_WIDTH": str(vision["image_width"]),
+        "IMAGE_HEIGHT": str(vision["image_height"]),
+        "RESIZE_MODE": str(vision["resize_mode"]),
+        "LETTERBOX_FILL": str(vision["letterbox_fill"]),
         "VISION_W_BITS": str(quantization["vision_weight_bits"]),
         "LANGUAGE_W_BITS": str(quantization["language_weight_bits"]),
         "LM_HEAD_W_BITS": str(quantization["lm_head_weight_bits"]),
@@ -548,6 +605,7 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
     outputs = _mapping(config["outputs"], "outputs")
+    vision = configured_vision_profile(config)
     cores = _mapping(build["cores"], "build.cores")
     build_root = resolve_path(config, "build_root")
     log_root = resolve_path(config, "log_root")
@@ -598,8 +656,10 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
             env.update({
                 "W_BITS": str(quantization["vision_weight_bits"]),
                 "VIT_CORE_NUM": str(cores["vision"]),
-                "IMAGE_WIDTH": str(IMAGE_WIDTH),
-                "IMAGE_HEIGHT": str(IMAGE_HEIGHT),
+                "IMAGE_WIDTH": str(vision["image_width"]),
+                "IMAGE_HEIGHT": str(vision["image_height"]),
+                "RESIZE_MODE": str(vision["resize_mode"]),
+                "LETTERBOX_FILL": str(vision["letterbox_fill"]),
             })
             script = PIPELINE_ROOT / "build_vision.sh"
         else:
@@ -647,8 +707,10 @@ def print_build_summary(config: Mapping[str, Any]) -> None:
     """
     language = _mapping(config["language"], "language")
     quantization = _mapping(config["quantization"], "quantization")
+    vision = configured_vision_profile(config)
     payload = {
-        "image": f"{IMAGE_WIDTH}x{IMAGE_HEIGHT}",
+        "image": f"{vision['image_width']}x{vision['image_height']}",
+        "visual_tokens": vision["visual_token_count"],
         "vision_w_bits": quantization["vision_weight_bits"],
         "chunk_size": language["chunk_size"],
         "cache_len": language["cache_len"],

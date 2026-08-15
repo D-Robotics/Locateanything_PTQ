@@ -44,9 +44,9 @@ class LocateAnythingVisionModel(Model):
       llm_hidden:    text_config.hidden_size (target of mlp1 projection)
 
     build() input:
-      hidden_states: (1, N_patches, patch²*in_channels)   = (1, 2304, 588)
+      hidden_states: (1, N_patches, patch²*in_channels)
     build() output:
-      visual_embeds: (1, N_patches/4, llm_hidden)          = (1, 576, 2048)
+      visual_embeds: (1, N_patches/4, llm_hidden)
     """
 
     def __init__(
