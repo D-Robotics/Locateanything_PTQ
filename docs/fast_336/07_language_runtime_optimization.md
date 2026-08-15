@@ -2,7 +2,7 @@
 
 ## 状态
 
-编译器、校准回放和共享 Runtime 代码已完成；本地静态、配置和 ABI 契约验证完成。尚未启动新的 1200 条生产校准、HBO/HBM 编译或 S600 性能验收。
+编译器、校准回放和共享 Runtime 代码已完成；本地静态、配置、ABI 契约和生产输入验证完成。4090 独立 checkout 已具备完整 Float checkpoint 与 1200 条校准输入，生产 Prepare、HBO/HBM 编译和 S600 性能验收尚未启动。
 
 ## 实际配置
 
@@ -40,11 +40,16 @@
 
 ```bash
 python compiler/quantize.py --config compiler/config/fast_336.yaml prepare --dry-run
-python compiler/quantize.py --config compiler/config/fast_336.yaml calibrate --dry-run
+python compiler/quantize.py --config compiler/config/fast_336.yaml build --component vision --target hbm --dry-run
 python compiler/quantize.py --config compiler/config/fast_336.yaml build --component language --target hbm --dry-run
 ```
 
-生产校准与编译命令需在阶段开始前再次冻结输入、输出目录和验收条件；本阶段未执行长时任务。
+生产输入位于：
+
+- Float checkpoint：`compiler/models/LocateAnything-3B/`
+- 校准数据：`compiler/datasets/calibration/locateanything/source/`
+
+生产 Prepare 完成并生成 `calibration/generated/generated.jsonl` 后，再执行 `calibrate --dry-run` 核对实际样本数与统计输出路径。本阶段未执行生产 Prepare、校准或编译。
 
 ## 已完成结果
 
@@ -56,9 +61,13 @@ python compiler/quantize.py --config compiler/config/fast_336.yaml build --compo
 - q6/q7/q12 与 AR q1/q2/q5 的确定性合成输入烟测均为 finite，KV 更新行数与真实 Query 一致；AR Top-1 为 3/3，最低余弦为 0.994282；PBD Top-1 为 12/18，最低余弦为 0.957581。合成输入结果只用于排除非有限值和明显图损坏，不替代真实数据 Token/Box 验收。
 - Float fused Prefill 与旧 Prefill + q6 的 Prompt KV 为 72/72 一致，26 个 PBD 决策 Token 一致，最小余弦为 0.999999。
 - Runtime 启动时验证 13 图、75 输入、73 输出、Prefill/Cache、Logits 与 KV 形状，并分别打印 `fused_prefill` 与 `compact_logits`；混合 ABI 直接拒绝。
-- S600 从 `d27d8c6` 独立构建 Runtime 成功；旧 fast HBM 被正确识别为 `1/q/q` ABI，使用错误图集合时 Runtime 按预期拒绝启动。
+- S600 从干净 `fast_336@d27d8c6` 重新执行 `colcon build --symlink-install --packages-select hobot_locateanything`，1 个功能包在 44.8 秒内构建成功；安装后的 `console` 与 `hobot_locateanything` 可执行文件分别为 539384 与 2498312 Byte。旧 fast HBM 被正确识别为 `1/q/q` ABI，使用错误图集合时 Runtime 按预期拒绝启动。
 - PTQ `inference/` 与 `hobot_locateanything` 的 29 个共享推理文件逐字节一致；两边 `cli.cpp` 仅保留 standalone YAML/当前目录与 ROS YAML/安装目录的适配差异。
 - 使用相同旧 fast HBM、图片和 `/detect bus` 对 Device-resident KV 与 Host mirrored KV 做 A/B：Token ID、`im_end`、`bus` 标签及边界框 `[0.000, 29.440, 448.000, 371.840]` 完全一致。Device 模式每个 Language 图保留 `18.00 MiB` resident KV，Host 模式为 `0`；总耗时分别为 `190.8 ms` 与 `201.6 ms`。该结果验证 Device-resident Cache 不改变生成语义。
+- 4090 生产 checkpoint 共 48 个文件、`7,796,046,769` Byte；模型索引包含 770 个权重映射和两片 Safetensors。校准输入共 1200 条、1208 个文件、`324,851,710` Byte。复制后的两棵目录已逐文件比较相对路径、大小和 SHA256，缺失、额外和不一致文件均为 0，目标目录均不是软链接。
+- checkpoint 可离线加载为 `LocateAnythingConfig`、`Qwen2TokenizerFast` 和 `LocateAnythingProcessor`，词表大小为 152681。生产 Worker 显式使用 `fix_mistral_regex=True` 与 `use_fast=False`。
+- 1200 条标注目标的 Token 长度均值为 77.72、P95 为 345.05、最大值为 813；2 条 OCR 标注超过运行时 768，0 条超过校准 896，验证了 Calibration 896 与 Runtime 768 必须分离。
+- 4090 的 Prepare、Vision HBM 和 Language HBM dry-run 均解析到 `336x336 / 144 / 256 / 1024 / W8 / 13 图 / fused Prefill / Compact Logits / 4 核`；配置 SHA256 仍为 `25fed32e2add5e8058481280d7ac894cfb93ea5c4c7fa11ca07519b419b68361`，新输出目录为空。
 
 以上结果证明代码和图契约已对齐，不代表新的生产 Scale、HBO、HBM 或板端性能已完成。
 
@@ -77,9 +86,9 @@ python compiler/quantize.py --config compiler/config/fast_336.yaml build --compo
 - 上一版 fast_336 Scale/HBM 的 Logits ABI 为 `1/q/q`，只能作为性能基线，不能通过 `--resume` 进入本轮输出目录。
 - Windows 环境没有 HBDK/OELLM 与 S600 厂商编译环境，本阶段只执行不触发生产构建的检查。
 - `calibrate --dry-run` 需要 Prepare 已生成 `generated.jsonl` 才能解析实际样本数；干净输出目录下应先完成 Prepare，再执行校准计划检查。
-- 4090 干净 checkout 尚未放入 `compiler/models/LocateAnything-3B` 和 `compiler/datasets/calibration/locateanything/source`；新输出目录尚不存在，未复用任何旧 Scale、BC、HBO 或 HBM。
+- 4090 输入已独立复制到配置指定目录；新输出目录尚不存在，未复用任何旧 Scale、BC、HBO 或 HBM。
 - Host mirrored KV 诊断在多目标长输出中会因每次图调用重复申请 UCP/ION 输入缓冲，在进程 `ulimit -n=1024` 下触发 `Too many open files`；该临时回退只用于 A/B，不进入公开 Runtime。正式 Device-resident 路径复用 KV 缓冲，不触发该问题。
 
 ## 结论与下一阶段门槛
 
-代码侧已具备新一轮生产校准和编译条件。开始 1200 条校准前必须再次确认：输入为完整 1200 条数据、配置哈希与 Git 提交固定、输出目录为空或为同契约可恢复目录，并明确 Source BC、Converted BC、HBO、HBM 和 S600 检测验收标准。
+fast_336 的代码、分支、配置、Float checkpoint、1200 条校准输入和空输出目录均已冻结，已达到启动生产 Prepare 的门槛。下一阶段从完整 1200 条 Prepare 开始；完成后依次核对生成数量与固定 Profile、执行 Calibration、13 图 Source/Converted BC、HBO/HBM 和 S600 检测性能验收，不允许切换 checkout、配置哈希或输出目录。
