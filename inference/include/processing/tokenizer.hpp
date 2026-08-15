@@ -17,9 +17,7 @@ class Tokenizer {
   Tokenizer(Tokenizer&&) noexcept;
   /** Move-assign a tokenizer without copying its tables. */
   Tokenizer& operator=(Tokenizer&&) noexcept;
-  /** Tokenizers are non-copyable because they own parser state. */
   Tokenizer(const Tokenizer&) = delete;
-  /** Tokenizers are non-copy-assignable because they own parser state. */
   Tokenizer& operator=(const Tokenizer&) = delete;
 
   /**

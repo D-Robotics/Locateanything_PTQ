@@ -32,9 +32,7 @@ class LanguageEngine {
   LanguageEngine(LanguageEngine&&) noexcept;
   /** Move-assign a Language engine. */
   LanguageEngine& operator=(LanguageEngine&&) noexcept;
-  /** Language engines are non-copyable because they own runtime state. */
   LanguageEngine(const LanguageEngine&) = delete;
-  /** Language engines are non-copy-assignable because they own runtime state. */
   LanguageEngine& operator=(const LanguageEngine&) = delete;
 
   /**

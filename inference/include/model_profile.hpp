@@ -7,7 +7,7 @@
 
 namespace locateanything {
 
-/** Static MoonViT canvas plus the architecture-derived runtime dimensions. */
+/** Static MoonViT canvas plus architecture-derived runtime dimensions. */
 class VisionProfile {
  public:
   static constexpr int32_t kPatchSize = 14;

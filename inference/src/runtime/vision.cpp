@@ -21,11 +21,8 @@ namespace {
 namespace rt = locateanything_runtime;
 
 constexpr int32_t kFp16 = 4;
-/**
- * @brief Multiply tensor dimensions into an element count.
- * @param shape Tensor dimensions.
- * @return Number of logical tensor elements.
- */
+
+/** Return the number of scalar elements represented by a tensor shape. */
 int64_t ElementCount(const std::vector<int32_t>& shape) {
   return std::accumulate(shape.begin(), shape.end(), int64_t{1},
                          std::multiplies<int64_t>());
@@ -113,7 +110,8 @@ VisionResult VisionEngine::Infer(const std::vector<uint16_t>& patches) {
   if (outputs.size() != 1 || outputs[0].shape != impl_->output_shape ||
       outputs[0].dtype != kFp16 ||
       outputs[0].data.size() !=
-          static_cast<size_t>(ElementCount(impl_->output_shape)) * sizeof(uint16_t)) {
+          static_cast<size_t>(ElementCount(impl_->output_shape)) *
+              sizeof(uint16_t)) {
     throw std::runtime_error("unexpected Vision HBM output contract");
   }
 

@@ -13,7 +13,7 @@
 
 namespace locateanything {
 
-/** Runtime assets and generation settings used by the inference core. */
+/** Runtime assets and generation settings shared by ROS and Console. */
 struct InferenceOptions {
   std::string vision_model;
   std::string language_model;
@@ -32,7 +32,7 @@ struct InferenceOptions {
 
 /** Optional presentation outputs requested by a caller. */
 struct InferenceOutputOptions {
-  // The shared core keeps rendering and serialization optional for callers.
+  // ROS publishes structured targets only; Console opts into presentation files.
   bool render_annotated = false;
   bool serialize_json = false;
   bool pretty_json = false;
@@ -58,41 +58,39 @@ class InferenceSession {
   explicit InferenceSession(InferenceOptions options);
   /** Release the loaded HBM sessions and host-side runtime state. */
   ~InferenceSession();
-  /** Move-construct a session without copying runtime state. */
+  /** Move an initialized or uninitialized session to a new owner. */
   InferenceSession(InferenceSession&&) noexcept;
-  /** Move-assign a session without copying runtime state. */
+  /** Move-assign a session to a new owner. */
   InferenceSession& operator=(InferenceSession&&) noexcept;
-  /** Sessions are non-copyable because they own vendor runtime handles. */
   InferenceSession(const InferenceSession&) = delete;
-  /** Sessions are non-copy-assignable because they own vendor runtime handles. */
   InferenceSession& operator=(const InferenceSession&) = delete;
 
   /**
-   * @brief Load and validate the Vision HBM, Language HBM, tokenizer, and embeddings.
+   * Load and validate the Vision HBM, Language HBM, tokenizer, and embeddings.
    * @param progress_callback Optional callback invoked for each loading stage.
    * @throws std::exception if an asset or graph contract is invalid.
    */
   void Initialize(
       const std::function<void(const std::string&)>& progress_callback = {});
   /**
-   * @brief Run one image through preprocessing, Vision, Language, and postprocessing.
+   * Run one image through preprocessing, Vision, Language, and postprocessing.
    * @param bgr Source image in non-empty three-channel BGR format.
    * @param command LocateAnything task command such as '/detect person'.
    * @param frame_index Source frame identifier copied into diagnostics/output.
    * @param output_options Select optional annotated image and JSON generation.
-   * @return Structured prediction, stop reason, and inference metrics.
+   * @return Structured prediction, generated tokens, stop reason, and metrics.
    * @throws std::exception if the session is not initialized or input is invalid.
    */
   InferenceOutput Infer(const cv::Mat& bgr, const std::string& command,
                         uint64_t frame_index = 0,
                         InferenceOutputOptions output_options = {});
   /**
-   * @brief Run multiple independent queries against one shared Vision result.
+   * Run multiple independent queries against one shared Vision result.
    * @param bgr Source image in non-empty three-channel BGR format.
    * @param commands Task commands with the same LocateAnything task prefix.
    * @param frame_index Source frame identifier copied into diagnostics/output.
    * @param output_options Select optional annotated image and JSON generation.
-   * @return Merged predictions and aggregate metrics for all queries.
+   * @return Merged predictions and aggregate timings for all queries.
    * @throws std::exception if commands are empty, incompatible, or inference
    * fails.
    */

@@ -7,11 +7,7 @@
 
 namespace locateanything_runtime {
 
-/**
- * @brief Encode a host float as an IEEE-754 binary16 bit pattern.
- * @param f Host floating-point value.
- * @return Raw fp16 bits consumed by the HBM graph.
- */
+/** Convert FP32 to binary16 with round-to-nearest-even semantics. */
 uint16_t FloatToFp16Bits(float f) {
   // IEEE 754 binary32 -> binary16 conversion (round to nearest, ties to even).
   uint32_t bits;
@@ -64,17 +60,7 @@ uint16_t FloatToFp16Bits(float f) {
   return static_cast<uint16_t>(sign);
 }
 
-/**
- * @brief Build the fixed-width causal/PBD attention mask for Language HBM.
- * @param q_len Number of query positions in this step.
- * @param cache_len Total fixed KV-cache length.
- * @param past_len Number of cache rows committed before this step.
- * @param block_size PBD block width, or zero for causal behavior.
- * @param mask_value_fp16 Raw fp16 value used for masked positions.
- * @param causal_attn Keep strict causal attention when true.
- * @param out Destination shape and fp16 mask values.
- * @return True when dimensions are valid and the mask was built.
- */
+/** Build the fixed-width causal/PBD attention mask consumed by Language HBM. */
 bool BuildAttentionMask(int32_t q_len,
                         int32_t cache_len,
                         int32_t past_len,

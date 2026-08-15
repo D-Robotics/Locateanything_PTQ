@@ -9,18 +9,6 @@
 
 namespace locateanything_runtime {
 
-/**
- * @brief Append host rows to a mirrored ring with a contiguous logical view.
- * @param storage Host storage containing one or two cache copies.
- * @param cache_rows Capacity of one cache copy in rows.
- * @param row_bytes Byte width of one cache row.
- * @param update Source rows to append.
- * @param update_bytes Available bytes at update.
- * @param committed_rows Number of leading update rows to commit.
- * @param byte_offset In/out logical start offset of the contiguous view.
- * @param copied_bytes Optional accumulated copy counter.
- * @return True when all rows were validated and appended.
- */
 bool AppendMirroredRingRows(std::vector<uint8_t>* storage,
                             size_t cache_rows,
                             size_t row_bytes,
@@ -80,17 +68,6 @@ bool AppendMirroredRingRows(std::vector<uint8_t>* storage,
   return true;
 }
 
-/**
- * @brief Append rows directly to a device-backed mirrored ring cache.
- * @param cache Device-backed tensor and logical byte offset.
- * @param cache_rows Capacity of one cache copy in rows.
- * @param row_bytes Byte width of one cache row.
- * @param update Source rows to append.
- * @param update_bytes Available bytes at update.
- * @param committed_rows Number of leading update rows to commit.
- * @param copied_bytes Optional accumulated copy counter.
- * @return True when both mirrored ranges were written and cache-cleaned.
- */
 bool AppendMirroredDeviceRingRows(Tensor* cache,
                                   size_t cache_rows,
                                   size_t row_bytes,

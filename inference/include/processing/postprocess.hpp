@@ -28,7 +28,7 @@ struct Point {
   std::array<float, 2> point{};
 };
 
-/** Structured LocateAnything result before presentation conversion. */
+/** Structured LocateAnything result before ROS message conversion. */
 struct Prediction {
   std::vector<Detection> detections;
   std::vector<Point> points;
@@ -43,7 +43,7 @@ class Postprocessor {
   explicit Postprocessor(float nms_iou = 0.9f);
 
   /**
-   * @brief Parse generated token IDs into boxes and points.
+   * Parse generated token IDs into boxes and points.
    * @param tokens Generated Language token IDs.
    * @param transform Transform used to restore source-image coordinates.
    * @param tokenizer Tokenizer used to decode reference labels.

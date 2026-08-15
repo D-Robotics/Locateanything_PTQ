@@ -28,9 +28,7 @@ class EmbedLookup {
   /** Unmap the embedding file and close its descriptor. */
   ~EmbedLookup();
 
-  /** Embedding mappings cannot be copied. */
   EmbedLookup(const EmbedLookup &) = delete;
-  /** Embedding mappings cannot be copy-assigned. */
   EmbedLookup &operator=(const EmbedLookup &) = delete;
 
   /**

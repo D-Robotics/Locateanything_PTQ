@@ -10,9 +10,10 @@
 //   - submits an inference task and waits for it to complete
 //   - copies the results back into host-side std::vector
 //
-// The wrapper exposes graph metadata, reusable input/output buffers,
-// device-backed KV tensors, and synchronous graph execution. Language graph
-// orchestration and PBD decoding remain in the Language runtime.
+// The wrapper is deliberately small: it exposes graph metadata, reusable
+// input/output buffers, explicit cache-backed tensors, and synchronous graph
+// execution. Language-side graph orchestration and PBD decoding stay in the
+// Language runtime rather than being hidden inside this vendor adapter.
 
 #pragma once
 
@@ -50,21 +51,21 @@ struct Tensor {
   std::shared_ptr<DeviceBuffer> device_buffer;
 };
 
+// Cacheable UCP memory visible to both Host and BPU. The implementation keeps
+// hbUCPSysMem private so public callers do not depend on the vendor headers.
 /** Cacheable UCP memory visible to both Host and BPU. */
 class DeviceBuffer {
  public:
   /** Release the vendor memory allocation, if one exists. */
   ~DeviceBuffer();
-  /** Device allocations cannot be copied. */
   DeviceBuffer(const DeviceBuffer &) = delete;
-  /** Device allocations cannot be copy-assigned. */
   DeviceBuffer &operator=(const DeviceBuffer &) = delete;
 
   /** Return the number of bytes allocated for this buffer. */
   size_t size() const;
 
  private:
-  /** Construct wrapper state before vendor memory allocation. */
+  /** Construct the private wrapper state before vendor memory allocation. */
   DeviceBuffer();
   struct Impl;
   std::unique_ptr<Impl> impl_;
@@ -72,6 +73,7 @@ class DeviceBuffer {
   friend class Graph;
   friend Result AllocateDeviceBuffer(size_t, bool,
                                      std::shared_ptr<DeviceBuffer> *);
+  friend Result ZeroDeviceBuffer(const std::shared_ptr<DeviceBuffer> &);
   friend Result WriteDeviceBuffer(const std::shared_ptr<DeviceBuffer> &,
                                   size_t, const void *, size_t);
 };
@@ -108,6 +110,8 @@ struct ExecutionMetrics {
   uint64_t output_bytes = 0;
 };
 
+// Allocate cacheable UCP/DDR memory. `zero_initialize` also cleans the cache so
+// a graph can consume the buffer immediately without another full-buffer copy.
 /**
  * @brief Allocate cacheable UCP/DDR memory for graph input or output.
  * @param bytes Required allocation size.
@@ -118,6 +122,10 @@ struct ExecutionMetrics {
 Result AllocateDeviceBuffer(size_t bytes, bool zero_initialize,
                             std::shared_ptr<DeviceBuffer> *buffer);
 
+/** Zero and cache-clean a complete UCP allocation for reuse. */
+Result ZeroDeviceBuffer(const std::shared_ptr<DeviceBuffer> &buffer);
+
+// Copy a changed range into UCP memory and clean only that range for the BPU.
 /**
  * @brief Copy a changed range into device memory and clean it for the BPU.
  * @param buffer Destination UCP allocation.
@@ -148,6 +156,8 @@ class Graph {
   /** Release graph metadata and persistent buffers. */
   ~Graph();
 
+  // Query the graph's name list and per-tensor properties. Cheap after the
+  // first call (results cached).
   /**
    * @brief Query and cache the graph input/output contract.
    * @param handle Vendor graph handle owned by the packed HBM session.
@@ -155,9 +165,9 @@ class Graph {
    */
   Result RefreshIO(hbDNNHandle_t handle);
 
-  /** Release graph-private input/output allocations while retaining metadata. */
-  void ReleasePersistentBuffers();
-
+  // Remember the C handle for later Execute calls. Kept separate from
+  // RefreshIO so that the HbmSession can pass the handle in once when it
+  // first looks the graph up.
   /**
    * @brief Remember the vendor graph handle used by later Execute calls.
    * @param handle Non-owning vendor graph handle.
@@ -172,6 +182,10 @@ class Graph {
    */
   void SetBackendMask(uint32_t backend_mask) { backend_mask_ = backend_mask; }
 
+  // Run the graph once with the given inputs, using the previously SetHandle
+  // C handle. `inputs` must be in the same order as GetInputNames(); each
+  // Tensor's shape/dtype must match the graph's declared IO. On success,
+  // `outputs` is filled in the order returned by GetOutputNames().
   /**
    * @brief Execute the graph using owned tensor values as inputs.
    * @param inputs Input tensors in vendor-declared order.
@@ -197,6 +211,8 @@ class Graph {
                  ExecutionMetrics *metrics = nullptr,
                  const std::vector<OutputSlice> *output_slices = nullptr);
 
+  // Run the graph with an explicit C handle (used when the caller has one
+  // but didn't go through SetHandle — e.g. from HbmSession).
   /**
    * @brief Execute with an explicit vendor handle and owned tensor values.
    * @param handle Vendor graph handle.
@@ -270,11 +286,11 @@ class HbmSession {
   /** Release the packed HBM handle and graph wrappers. */
   ~HbmSession();
 
-  /** HBM sessions cannot be copied because they own vendor handles. */
   HbmSession(const HbmSession &) = delete;
-  /** HBM sessions cannot be copy-assigned because they own vendor handles. */
   HbmSession &operator=(const HbmSession &) = delete;
 
+  // Load `hbm_path` into BPU memory. After this, GetGraphNames() returns the
+  // packed file's graph name list.
   /**
    * @brief Load a packed HBM file and enumerate its graph names.
    * @param hbm_path Explicit HBM file path.
@@ -282,6 +298,7 @@ class HbmSession {
    */
   Result Load(const std::string &hbm_path);
 
+  // Zero lets HBRT choose a backend. Non-zero values are explicit BPU masks.
   /**
    * @brief Select the BPU backend mask for all graphs in this session.
    * @param backend_mask S600 BPU backend bit mask.
@@ -291,6 +308,8 @@ class HbmSession {
     for (auto &entry : graphs_) entry.second->SetBackendMask(backend_mask);
   }
 
+  // Fetch a graph by name. First call per name will lazily refresh its IO
+  // metadata. The returned pointer is owned by the session (do not delete).
   /**
    * @brief Return a lazily initialized graph wrapper by name.
    * @param name Packed HBM graph name.
@@ -298,6 +317,9 @@ class HbmSession {
    */
   Graph *GetGraph(const std::string &name);
 
+  // Convenience: look up the graph by name and run it in one call. Avoids
+  // having to plumb the raw C handle out to callers (the Graph object does
+  // not expose its handle).
   /**
    * @brief Look up and execute a graph using owned tensor values.
    * @param graph_name Packed HBM graph name.
@@ -327,6 +349,8 @@ class HbmSession {
                             ExecutionMetrics *metrics = nullptr,
                             const std::vector<OutputSlice> *output_slices = nullptr);
 
+  // List of all graph names in this hbm (e.g. ["visual"], or
+  // ["prefill", "decode"]).
   /** Return all graph names in the packed HBM file. */
   const std::vector<std::string> &GetGraphNames() const { return graph_names_; }
 
@@ -334,10 +358,11 @@ class HbmSession {
   void *packed_handle_ = nullptr;  // hbDNNPackedHandle_t
   std::vector<std::string> graph_names_;
   std::unordered_map<std::string, std::unique_ptr<Graph>> graphs_;
-  Graph *active_graph_ = nullptr;  // owned by graphs_
   uint32_t backend_mask_ = 15;
 };
 
+// Helper: number of bytes per element for a given HB_DNN_TENSOR_TYPE_*.
+// Mirrors HB_RuntimeUtils.hpp's dtype-size table.
 /**
  * @brief Return the byte width of one HB_DNN tensor element.
  * @param dtype Vendor tensor-type integer.
@@ -345,6 +370,7 @@ class HbmSession {
  */
 int32_t DtypeElementBytes(int32_t dtype);
 
+// Helper: convert HB_DNN_TENSOR_TYPE_* -> a short human-readable string.
 /**
  * @brief Return a short human-readable HB_DNN tensor type name.
  * @param dtype Vendor tensor-type integer.

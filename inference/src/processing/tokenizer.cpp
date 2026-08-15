@@ -222,7 +222,7 @@ std::vector<std::string> SplitUtf8(const std::string& value) {
 /**
  * @brief Classify letters for the model's byte-level pretokenization.
  * @param item Input byte.
- * @return True for ASCII letters or a non-ASCII byte.
+ * @return True for ASCII letters or a non-ASCII leading/continuation byte.
  */
 bool IsLetterByte(unsigned char item) {
   return std::isalpha(item) != 0 || item >= 0x80U;
