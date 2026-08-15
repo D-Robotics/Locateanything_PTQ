@@ -64,25 +64,45 @@ The table reports one query per task. Multiple queries share one Vision run; Pre
 | RDK S600 | Layout grounding | 43 | 245.4 | 151.8 | 448.1 | 904.7 | 96.0 |
 | RDK S600 | Point localization | 37 | 246.0 | 152.2 | 480.5 | 923.5 | 77.0 |
 
+### Detection profile comparison
+
+The fast profile is evaluated only on object detection. Both profiles use Hybrid generation, NMS IoU 0.9, and four BPU cores. The following results were measured on the same RDK S600 with the same 350-frame `person_video.avi` and `/detect person` command.
+
+| Profile | Frames | Boxes | FPS | Vision mean (ms) | Prefill mean (ms) | Decode mean (ms) | Total mean (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fast_336 | 350 | 6204 | 0.816 | 23.0 | 51.1 | 1125.1 | 1220.0 |
+| stable_672 | 350 | 6025 | 0.667 | 247.3 | 153.7 | 1049.6 | 1493.9 |
+
+| Resource mean | fast_336 | stable_672 |
+| --- | ---: | ---: |
+| Console CPU, one-core percentage | 56.0% | 46.4% |
+| Console RSS | 184.8 MiB | 204.5 MiB |
+| Four-core BPU utilization | 64.1% | 67.2% |
+| DDR Read+Write `Bandwidth` | 88.8 GiB/s | 91.8 GiB/s |
+
+fast_336 increased the measured end-to-end processing FPS by 22.34% and reduced the average total latency by 18.34%. It produced 2.97% more boxes in this video, so its Decode workload was also higher. Frame-level box and IoU comparisons are recorded in [the fast_336 S600 report](docs/fast_336/06_s600_comparison.md).
+
 ## Model and quantization
 
 <p align="center">
   <img src="assets/LocateAnything_pipeline.png" alt="LocateAnything pipeline" width="100%">
 </p>
 
-| Item | Configuration |
-| --- | --- |
-| Model | LocateAnything-3B |
-| Vision | MoonViT, 27 blocks, `672 x 672` |
-| Language | Qwen2.5 decoder, 36 layers, hidden size 2048 |
-| Linear layers | W8A8: signed W8 weights and dynamically quantized INT8 activations |
-| Attention QK / WV | Dynamic INT8 |
-| KV cache | INT8 |
-| Calibration | 1,200 images |
-| Prefill length | 1024 tokens |
-| KV cache capacity | 4096 tokens per query |
-| Decode | PBD q=6, AR q=1, host sampling |
-| Target | Nash-P, four BPU cores, L2 `6:6:6:6` |
+| Item | stable_672 | fast_336 |
+| --- | --- | --- |
+| Model | LocateAnything-3B | LocateAnything-3B |
+| Vision | MoonViT, 27 blocks, `672 x 672` | MoonViT, 27 blocks, `336 x 336` |
+| Visual tokens | 576 | 144 |
+| Language | Qwen2.5 decoder, 36 layers, hidden size 2048 | Same |
+| Prefill length | 1024 tokens | 256 tokens |
+| KV cache capacity | 4096 tokens per query | 1024 tokens per query |
+| Runtime max new tokens | 4096 | 768 |
+| Linear layers | W8A8: signed W8 weights and dynamically quantized INT8 activations | Same policy, independently calibrated scales |
+| Attention QK / WV | Dynamic INT8 | Dynamic INT8 |
+| KV cache | INT8 | INT8 |
+| Calibration | 1,200 images | The same 1,200 source images, regenerated for 336 |
+| Decode | PBD q=6, AR q=1, host sampling | Same |
+| Target | Nash-P, four BPU cores, L2 `6:6:6:6` | Same |
 
 ## Environment
 
@@ -149,6 +169,8 @@ unzip -qo \
 
 ### 5. Build HBM
 
+Use `compiler/config/quantization.yaml` for stable_672 or `compiler/config/fast_336.yaml` for fast_336. The two configurations use separate calibration and build output directories.
+
 ```bash
 python compiler/quantize.py \
   --config compiler/config/quantization.yaml \
@@ -162,6 +184,8 @@ python compiler/quantize.py \
   --config compiler/config/quantization.yaml \
   build --component all --target hbm
 ```
+
+For fast_336, replace `compiler/config/quantization.yaml` with `compiler/config/fast_336.yaml` in all three commands.
 
 ## Inference
 
@@ -227,6 +251,8 @@ inference/models/
     └── added_tokens.json
 ```
 
+For fast_336, place its three compiled model files in `inference/models/fast_336/`. The tokenizer remains in `inference/models/tokenizer/`.
+
 ### 2. Build the inference executable
 
 ```bash
@@ -234,12 +260,22 @@ cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
 cmake --build inference/build --parallel 2
 ```
 
-### 3. Basic feature: object detection
+### 3. Select the runtime profile
+
+```bash
+# stable_672
+./inference/build/console --config inference/config_stable_672.yaml
+
+# fast_336
+./inference/build/console --config inference/config_fast_336.yaml
+```
+
+### 4. Basic feature: object detection
 
 #### Start the Console
 
 ```bash
-./inference/build/console --config inference/config.yaml
+./inference/build/console --config inference/config_stable_672.yaml
 ```
 
 Enter an image and a detection command:
@@ -296,12 +332,12 @@ Saved
 
 <img src="assets/results/detection_multiclass.jpg" alt="Object detection" width="720">
 
-### 4. Advanced tasks
+### 5. Advanced tasks
 
 Advanced features use the same Console for inference.
 
 ```bash
-./inference/build/console --config inference/config.yaml
+./inference/build/console --config inference/config_stable_672.yaml
 ```
 
 Console output:
@@ -538,7 +574,7 @@ Saved
 
 <img src="assets/results/point_succulent.jpg" alt="Point localization" width="512">
 
-### 5. Image and video outputs
+### 6. Image and video outputs
 
 Image results are saved as `inference/outputs/<image-name>/annotated.jpg` and `prediction.json`.
 

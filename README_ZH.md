@@ -63,25 +63,45 @@ LocateAnything 主要面向视觉检测与定位任务，Prompt 格式相对固�
 | RDK S600 | 版面定位 | 43 | 245.4 | 151.8 | 448.1 | 904.7 | 96.0 |
 | RDK S600 | 点定位 | 37 | 246.0 | 152.2 | 480.5 | 923.5 | 77.0 |
 
+### 检测 Profile 对比
+
+快速版仅对目标检测进行对比验收。两套 Profile 均使用 Hybrid、NMS IoU 0.9 和 4 个 BPU 核。以下结果在同一台 RDK S600 上使用相同的 350 帧 `person_video.avi` 和 `/detect person` 指令测得。
+
+| Profile | 帧数 | 检测框 | FPS | Vision 均值 (ms) | Prefill 均值 (ms) | Decode 均值 (ms) | 总耗时均值 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fast_336 | 350 | 6204 | 0.816 | 23.0 | 51.1 | 1125.1 | 1220.0 |
+| stable_672 | 350 | 6025 | 0.667 | 247.3 | 153.7 | 1049.6 | 1493.9 |
+
+| 资源均值 | fast_336 | stable_672 |
+| --- | ---: | ---: |
+| Console CPU，单核百分比 | 56.0% | 46.4% |
+| Console RSS | 184.8 MiB | 204.5 MiB |
+| 四核 BPU 利用率 | 64.1% | 67.2% |
+| DDR Read+Write `Bandwidth` | 88.8 GiB/s | 91.8 GiB/s |
+
+fast_336 的端到端实际处理 FPS 提升 22.34%，平均总耗时降低 18.34%。该视频中 fast_336 的检测框多 2.97%，因此 Decode 工作量也更高。逐帧框数和 IoU 对比见 [fast_336 S600 验收记录](docs/fast_336/06_s600_comparison.md)。
+
 ## 模型与量化
 
 <p align="center">
   <img src="assets/LocateAnything_pipeline.png" alt="LocateAnything 推理流程" width="100%">
 </p>
 
-| 项目 | 配置 |
-| --- | --- |
-| 模型 | LocateAnything-3B |
-| Vision | MoonViT，27 个 Block，`672 x 672` |
-| Language | Qwen2.5 Decoder，36 层，Hidden Size 2048 |
-| 线性层 | W8A8：有符号 W8 权重，激活动态量化为 INT8 |
-| Attention QK / WV | 动态 INT8 |
-| KV Cache | INT8 |
-| 校准 | 1,200 张图片 |
-| Prefill 长度 | 1024 Token |
-| KV Cache 容量 | 每个 Query 4096 Token |
-| 解码 | PBD q=6、AR q=1、Host 采样 |
-| 目标平台 | Nash-P，4 个 BPU 核，L2 `6:6:6:6` |
+| 项目 | stable_672 | fast_336 |
+| --- | --- | --- |
+| 模型 | LocateAnything-3B | LocateAnything-3B |
+| Vision | MoonViT，27 个 Block，`672 x 672` | MoonViT，27 个 Block，`336 x 336` |
+| Visual Token | 576 | 144 |
+| Language | Qwen2.5 Decoder，36 层，Hidden Size 2048 | 相同 |
+| Prefill 长度 | 1024 Token | 256 Token |
+| KV Cache 容量 | 每个 Query 4096 Token | 每个 Query 1024 Token |
+| 运行时最大生成 Token | 4096 | 768 |
+| 线性层 | W8A8：有符号 W8 权重，激活动态量化为 INT8 | 同一量化策略，独立校准激活 Scale |
+| Attention QK / WV | 动态 INT8 | 动态 INT8 |
+| KV Cache | INT8 | INT8 |
+| 校准 | 1,200 张图片 | 使用相同的 1,200 张源图，按 336 重新生成 |
+| 解码 | PBD q=6、AR q=1、Host 采样 | 相同 |
+| 目标平台 | Nash-P，4 个 BPU 核，L2 `6:6:6:6` | 相同 |
 
 ## 开发环境
 
@@ -148,6 +168,8 @@ unzip -qo \
 
 ### 5. 编译 HBM
 
+stable_672 使用 `compiler/config/quantization.yaml`，fast_336 使用 `compiler/config/fast_336.yaml`。两套配置的校准和编译输出目录相互独立。
+
 ```bash
 python compiler/quantize.py \
   --config compiler/config/quantization.yaml \
@@ -161,6 +183,8 @@ python compiler/quantize.py \
   --config compiler/config/quantization.yaml \
   build --component all --target hbm
 ```
+
+编译 fast_336 时，将三个命令中的 `compiler/config/quantization.yaml` 替换为 `compiler/config/fast_336.yaml`。
 
 ## 推理
 
@@ -225,6 +249,8 @@ inference/models/
     └── added_tokens.json
 ```
 
+fast_336 的三个编译模型文件放在 `inference/models/fast_336/`，词表继续使用 `inference/models/tokenizer/`。
+
 ### 2. 编译推理程序
 
 ```bash
@@ -232,12 +258,22 @@ cmake -S inference -B inference/build -DCMAKE_BUILD_TYPE=Release
 cmake --build inference/build --parallel 2
 ```
 
-### 3. 基础功能：目标检测
+### 3. 选择运行 Profile
+
+```bash
+# stable_672
+./inference/build/console --config inference/config_stable_672.yaml
+
+# fast_336
+./inference/build/console --config inference/config_fast_336.yaml
+```
+
+### 4. 基础功能：目标检测
 
 #### 启动 Console
 
 ```bash
-./inference/build/console --config inference/config.yaml
+./inference/build/console --config inference/config_stable_672.yaml
 ```
 
 输入图片和检测指令：
@@ -294,12 +330,12 @@ Saved
 
 <img src="assets/results/detection_multiclass.jpg" alt="目标检测" width="720">
 
-### 4. 进阶功能
+### 5. 进阶功能
 
 进阶功能通过同一 Console 运行推理。
 
 ```bash
-./inference/build/console --config inference/config.yaml
+./inference/build/console --config inference/config_stable_672.yaml
 ```
 
 终端输出：
@@ -536,7 +572,7 @@ Saved
 
 <img src="assets/results/point_succulent.jpg" alt="点定位" width="512">
 
-### 5. 图片与视频输出
+### 6. 图片与视频输出
 
 图片结果保存在 `inference/outputs/<图片名>/annotated.jpg` 和 `prediction.json`。
 
