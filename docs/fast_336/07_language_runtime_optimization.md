@@ -27,6 +27,13 @@
 
 本记录提交前，4090 独立 checkout 与 PTQ 优化代码基线一致，S600 独立 checkout 与 Runtime 优化代码基线一致。PTQ fast 配置 SHA256 为 `25fed32e2add5e8058481280d7ac894cfb93ea5c4c7fa11ca07519b419b68361`，Runtime fast 配置 SHA256 为 `f8232b84aa0b0a5b361dd4add904d8e0e435fc38ba050e2c2098418acf748f7d`。
 
+生产任务只允许从以下两个独立 Git checkout 启动：
+
+- 4090：`/home/kangjie.xu/oe_locateanything/fast_336_checkout/Locateanything_PTQ`
+- S600：`/home/sunrise/LA_Test/hobot_locateanything_fast_336_checkout`
+
+`/home/kangjie.xu/oe_locateanything/fast_336/Locateanything_PTQ` 与 `/home/sunrise/LA_Test/hobot_locateanything_fast_336` 是历史复制/构建目录，不是本轮源码入口。前者执行 Git 命令时会向上解析到父仓库的 `main`，因此禁止从该目录启动校准或编译。PTQ 的早期参数化与检测记录已在建立 `fast_336` 前进入 `develop`；本轮 Language 优化提交 `6384774` 及其后续提交只存在于 `fast_336`，本阶段未改写或提交 `develop/main`。
+
 ## 输入与命令
 
 配置入口：
@@ -51,6 +58,7 @@ python compiler/quantize.py --config compiler/config/fast_336.yaml build --compo
 - Runtime 启动时验证 13 图、75 输入、73 输出、Prefill/Cache、Logits 与 KV 形状，并分别打印 `fused_prefill` 与 `compact_logits`；混合 ABI 直接拒绝。
 - S600 从 `d27d8c6` 独立构建 Runtime 成功；旧 fast HBM 被正确识别为 `1/q/q` ABI，使用错误图集合时 Runtime 按预期拒绝启动。
 - PTQ `inference/` 与 `hobot_locateanything` 的 29 个共享推理文件逐字节一致；两边 `cli.cpp` 仅保留 standalone YAML/当前目录与 ROS YAML/安装目录的适配差异。
+- 使用相同旧 fast HBM、图片和 `/detect bus` 对 Device-resident KV 与 Host mirrored KV 做 A/B：Token ID、`im_end`、`bus` 标签及边界框 `[0.000, 29.440, 448.000, 371.840]` 完全一致。Device 模式每个 Language 图保留 `18.00 MiB` resident KV，Host 模式为 `0`；总耗时分别为 `190.8 ms` 与 `201.6 ms`。该结果验证 Device-resident Cache 不改变生成语义。
 
 以上结果证明代码和图契约已对齐，不代表新的生产 Scale、HBO、HBM 或板端性能已完成。
 
@@ -70,6 +78,7 @@ python compiler/quantize.py --config compiler/config/fast_336.yaml build --compo
 - Windows 环境没有 HBDK/OELLM 与 S600 厂商编译环境，本阶段只执行不触发生产构建的检查。
 - `calibrate --dry-run` 需要 Prepare 已生成 `generated.jsonl` 才能解析实际样本数；干净输出目录下应先完成 Prepare，再执行校准计划检查。
 - 4090 干净 checkout 尚未放入 `compiler/models/LocateAnything-3B` 和 `compiler/datasets/calibration/locateanything/source`；新输出目录尚不存在，未复用任何旧 Scale、BC、HBO 或 HBM。
+- Host mirrored KV 诊断在多目标长输出中会因每次图调用重复申请 UCP/ION 输入缓冲，在进程 `ulimit -n=1024` 下触发 `Too many open files`；该临时回退只用于 A/B，不进入公开 Runtime。正式 Device-resident 路径复用 KV 缓冲，不触发该问题。
 
 ## 结论与下一阶段门槛
 
