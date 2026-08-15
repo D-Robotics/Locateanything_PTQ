@@ -29,6 +29,8 @@ BUILD_TARGET="${BUILD_TARGET:?set by compiler/quantize.py}"
 WAIT="${WAIT:?set by compiler/quantize.py}"
 DETACH="${DETACH:?set by compiler/quantize.py}"
 RESUME="${RESUME:?set by compiler/quantize.py}"
+COMPACT_LOGITS="${COMPACT_LOGITS:-0}"
+FUSE_INITIAL_PBD="${FUSE_INITIAL_PBD:-0}"
 
 INPUT_MODEL_PATH="${INPUT_MODEL_PATH:?set by compiler/quantize.py}"
 OUTPUT_MODEL_PATH="${OUTPUT_MODEL_PATH:?set by compiler/quantize.py}"
@@ -47,6 +49,8 @@ esac
 [[ "$WAIT" == "0" || "$WAIT" == "1" ]] || { echo "WAIT must be 0 or 1"; exit 1; }
 [[ "$DETACH" == "0" || "$DETACH" == "1" ]] || { echo "DETACH must be 0 or 1"; exit 1; }
 [[ "$RESUME" == "0" || "$RESUME" == "1" ]] || { echo "RESUME must be 0 or 1"; exit 1; }
+[[ "$COMPACT_LOGITS" == "0" || "$COMPACT_LOGITS" == "1" ]] || { echo "COMPACT_LOGITS must be 0 or 1"; exit 1; }
+[[ "$FUSE_INITIAL_PBD" == "0" || "$FUSE_INITIAL_PBD" == "1" ]] || { echo "FUSE_INITIAL_PBD must be 0 or 1"; exit 1; }
 PID_PATH="${PID_PATH:-$LOG_DIR/language_${BUILD_TARGET}.pid}"
 EXIT_PATH="${EXIT_PATH:-$LOG_DIR/language_${BUILD_TARGET}.exit.txt}"
 LAUNCH_LOG="${LAUNCH_LOG:-$LOG_DIR/language_${BUILD_TARGET}.launcher.log}"
@@ -90,6 +94,12 @@ fi
 if [[ "$DISABLE_HIDDEN_ROTATION" == "1" ]]; then
   EXTRA_ARGS+=(--disable_hidden_rotation)
 fi
+if [[ "$COMPACT_LOGITS" == "1" ]]; then
+  EXTRA_ARGS+=(--compact_logits)
+fi
+if [[ "$FUSE_INITIAL_PBD" == "1" ]]; then
+  EXTRA_ARGS+=(--fuse_initial_pbd)
+fi
 HBM_PATH="$OUTPUT_MODEL_PATH/$LANGUAGE_HBM_NAME"
 EMBEDDING_PATH="$OUTPUT_MODEL_PATH/$EMBEDDING_NAME"
 EXPECTED_EMBEDDING_BYTES=$((152681 * 2048 * 2))
@@ -109,6 +119,8 @@ STAGE_ARGS=(
   --language-w-bits "$W_BITS"
   --lm-head-w-bits "$LM_HEAD_W_BITS"
 )
+[[ "$COMPACT_LOGITS" == "1" ]] && STAGE_ARGS+=(--compact-logits)
+[[ "$FUSE_INITIAL_PBD" == "1" ]] && STAGE_ARGS+=(--fuse-initial-pbd)
 mapfile -t LANGUAGE_GRAPHS < <(
   "$PYTHON_BIN" -m model.graphs
 )

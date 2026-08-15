@@ -166,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--hidden_rotation_path", type=validated_path(), default=None)
     parser.add_argument("--disable_hidden_rotation", action="store_true")
+    parser.add_argument(
+        "--compact_logits", action="store_true",
+        help="Emit only logits rows consumed by Host decoding.",
+    )
+    parser.add_argument(
+        "--fuse_initial_pbd", action="store_true",
+        help="Append the initial six-token PBD window to the Prefill graph.",
+    )
     parser.add_argument("--export_only", action="store_true")
     return parser
 

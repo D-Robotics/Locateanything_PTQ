@@ -37,6 +37,8 @@ KNOWN_STAGES = set(LANGUAGE_GRAPHS)
 class LanguageContract:
     chunk_size: int
     cache_len: int
+    compact_logits: bool = False
+    fuse_initial_pbd: bool = False
 
 
 def expected_contract(
@@ -53,7 +55,12 @@ def expected_contract(
     Returns:
         Logits and per-layer KV update shapes.
     """
-    return language_output_shapes(name, contract.chunk_size)
+    return language_output_shapes(
+        name,
+        contract.chunk_size,
+        compact_logits=contract.compact_logits,
+        fuse_initial_pbd=contract.fuse_initial_pbd,
+    )
 
 
 def query_length(name: str, contract: LanguageContract) -> int:
@@ -162,6 +169,8 @@ def expected_io_contract(
         contract.chunk_size,
         contract.cache_len,
         cache_dtype=cache_dtype,
+        compact_logits=contract.compact_logits,
+        fuse_initial_pbd=contract.fuse_initial_pbd,
     )
 
 
@@ -537,6 +546,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-len", type=int, default=4096)
     parser.add_argument("--language-w-bits", type=int, choices=(4, 8), default=8)
     parser.add_argument("--lm-head-w-bits", type=int, choices=(4, 8), default=8)
+    parser.add_argument("--compact-logits", action="store_true")
+    parser.add_argument("--fuse-initial-pbd", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--convert_only", action="store_true")
     parser.add_argument("--check_only", action="store_true")
@@ -576,7 +587,12 @@ def main() -> int:
         or args.cache_len % 64
     ):
         raise RuntimeError("chunk/cache lengths must be multiples of 64 with cache > chunk")
-    args.contract = LanguageContract(args.chunk_size, args.cache_len)
+    args.contract = LanguageContract(
+        args.chunk_size,
+        args.cache_len,
+        compact_logits=args.compact_logits,
+        fuse_initial_pbd=args.fuse_initial_pbd,
+    )
     if args.hbm_path and len(args.ar_core_nums) != 1:
         raise RuntimeError("--hbm_path requires exactly one --ar_core_nums value")
     args.output_dir.mkdir(parents=True, exist_ok=True)

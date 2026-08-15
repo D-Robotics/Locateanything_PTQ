@@ -26,6 +26,16 @@ LANGUAGE_CACHE_TENSOR_COUNT = LANGUAGE_LAYER_COUNT * 2
 LANGUAGE_INPUT_COUNT = 3 + LANGUAGE_CACHE_TENSOR_COUNT
 LANGUAGE_OUTPUT_COUNT = 1 + LANGUAGE_CACHE_TENSOR_COUNT
 
+LANGUAGE_PROFILE_DEFAULTS = {
+    "chunk_size": 1024,
+    "cache_len": 4096,
+    "pbd_query_len": PBD_QUERY_LEN,
+    "language_decoder_weight_bits": 8,
+    "language_lm_head_weight_bits": 8,
+    "compact_logits": False,
+    "fuse_initial_pbd": False,
+}
+
 
 def derive_vision_profile(
     image_width: int,
@@ -158,7 +168,11 @@ def language_query_length(graph: str, chunk_size: int) -> int:
 
 
 def language_output_shapes(
-    graph: str, chunk_size: int
+    graph: str,
+    chunk_size: int,
+    *,
+    compact_logits: bool = False,
+    fuse_initial_pbd: bool = False,
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
     """
     Function:
@@ -173,7 +187,14 @@ def language_output_shapes(
     """
 
     query_len = language_query_length(graph, chunk_size)
-    logits_rows = 1 if graph == "prefill" else query_len
+    if graph == "prefill":
+        logits_rows = 7 if fuse_initial_pbd else 1
+    elif compact_logits and graph.startswith("decode_ar"):
+        logits_rows = 1
+    elif compact_logits and (graph == "decode" or graph.startswith("decode_pbd_q")):
+        logits_rows = min(PBD_QUERY_LEN, query_len)
+    else:
+        logits_rows = query_len
     return (
         (1, logits_rows, VOCAB_SIZE),
         (1, query_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM),
@@ -186,6 +207,8 @@ def language_io_contract(
     cache_len: int,
     *,
     cache_dtype: str = "float32",
+    compact_logits: bool = False,
+    fuse_initial_pbd: bool = False,
 ) -> tuple[
     list[tuple[tuple[int, ...], str]],
     list[tuple[tuple[int, ...], str]],
@@ -205,7 +228,12 @@ def language_io_contract(
     """
 
     query_len = language_query_length(graph, chunk_size)
-    logits_shape, update_shape = language_output_shapes(graph, chunk_size)
+    logits_shape, update_shape = language_output_shapes(
+        graph,
+        chunk_size,
+        compact_logits=compact_logits,
+        fuse_initial_pbd=fuse_initial_pbd,
+    )
     cache_shape = (1, cache_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM)
     inputs = [
         ((1, query_len, HIDDEN_SIZE), "float16"),
@@ -244,12 +272,23 @@ def validate_compiler_profile(
 
     profile = manifest.get("profile")
     if not isinstance(profile, Mapping):
+        non_default = {
+            name: expected
+            for name, expected in expected_profile.items()
+            if name not in LANGUAGE_PROFILE_DEFAULTS
+            or expected != LANGUAGE_PROFILE_DEFAULTS[name]
+        }
+        if non_default:
+            raise ValueError(
+                "legacy scale manifest without a compiler profile cannot be used "
+                f"with non-default Language ABI: {non_default}"
+            )
         return {}
-    drift = {
-        name: {"expected": expected, "actual": profile.get(name)}
-        for name, expected in expected_profile.items()
-        if profile.get(name) != expected
-    }
+    drift = {}
+    for name, expected in expected_profile.items():
+        actual = profile.get(name, LANGUAGE_PROFILE_DEFAULTS.get(name))
+        if actual != expected:
+            drift[name] = {"expected": expected, "actual": actual}
     if drift:
         raise ValueError(f"scale manifest compiler profile mismatch: {drift}")
     return dict(profile)

@@ -60,6 +60,7 @@ class DecodeReplayContext(NamedTuple):
     eligible_target_offsets: tuple[int, ...]
     required_target_offsets: tuple[int, ...]
 
+
     @property
     def suffix_len(self) -> int:
         return len(self.suffix_token_ids)
@@ -91,6 +92,15 @@ class DecodeReplayContext(NamedTuple):
             "eligible_target_offsets": list(self.eligible_target_offsets),
             "required_target_offsets": list(self.required_target_offsets),
         }
+
+
+class RuntimePrefillInputs(NamedTuple):
+    inputs_embeds: torch.Tensor
+    position_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    committed_len: int
+    cache_source_start: int
+    fused_initial_pbd: bool
 
 
 def read_generated_manifest(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
@@ -138,6 +148,7 @@ def build_prefill_inputs(
     dtype: torch.dtype,
     mask_value: float = -32768.0,
     suffix_token_ids: Iterable[int] | None = None,
+    right_aligned: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
     input_ids = payload["prompt_input_ids"].reshape(-1).to(torch.long)
     active_len = int(payload["prompt_attention_mask"].reshape(-1).sum().item())
@@ -169,20 +180,165 @@ def build_prefill_inputs(
     inputs_embeds = torch.zeros(
         (1, chunk_size, active.shape[-1]), device=device, dtype=dtype
     )
-    inputs_embeds[0, :active_len] = active
-    position_ids = torch.arange(chunk_size, device=device, dtype=torch.int32).view(1, 1, -1)
+    row_offset = chunk_size - active_len if right_aligned else 0
+    inputs_embeds[0, row_offset : row_offset + active_len] = active
+    if right_aligned:
+        position_ids = torch.zeros(
+            (1, 1, chunk_size), device=device, dtype=torch.int32
+        )
+        position_ids[:, :, row_offset : row_offset + active_len] = torch.arange(
+            active_len, device=device, dtype=torch.int32
+        )
+    else:
+        position_ids = torch.arange(
+            chunk_size, device=device, dtype=torch.int32
+        ).view(1, 1, -1)
 
     current_start = cache_len - chunk_size
     mask = torch.full(
         (1, 1, chunk_size, cache_len), mask_value, device=device, dtype=dtype
     )
-    for query in range(chunk_size):
-        visible = min(query + 1, active_len)
-        if visible:
-            mask[:, :, query, current_start : current_start + visible] = 0
-        if query >= active_len:
-            mask[:, :, query, current_start + query] = 0
+    if right_aligned:
+        for query in range(chunk_size):
+            if query < row_offset:
+                mask[:, :, query, current_start + query] = 0
+            else:
+                mask[
+                    :, :, query,
+                    current_start + row_offset : current_start + query + 1,
+                ] = 0
+    else:
+        for query in range(chunk_size):
+            visible = min(query + 1, active_len)
+            if visible:
+                mask[:, :, query, current_start : current_start + visible] = 0
+            if query >= active_len:
+                mask[:, :, query, current_start + query] = 0
     return inputs_embeds, position_ids, mask, active_len
+
+
+def build_fused_prefill_pbd_inputs(
+    text_model: Any,
+    payload: dict[str, Any],
+    rotation: torch.Tensor,
+    *,
+    chunk_size: int,
+    cache_len: int,
+    image_token_id: int,
+    text_mask_token_id: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    mask_value: float = -32768.0,
+    suffix_token_ids: Iterable[int] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    """Build the runtime-equivalent right-aligned Prefill plus first PBD window."""
+    input_ids = payload["prompt_input_ids"].reshape(-1).to(torch.long)
+    attention_mask = payload["prompt_attention_mask"].reshape(-1)
+    prompt_len = int(attention_mask.sum().item())
+    if prompt_len < 1 or prompt_len != input_ids.numel():
+        raise ValueError(f"invalid prompt length for fused Prefill: {prompt_len}")
+    suffix = [int(token_id) for token_id in suffix_token_ids or ()]
+    committed_len = prompt_len + len(suffix)
+    if committed_len + 6 > chunk_size:
+        raise ValueError(
+            f"fused Prefill needs {committed_len + 6} rows, chunk size is {chunk_size}"
+        )
+    anchor = suffix[-1] if suffix else int(input_ids[prompt_len - 1].item())
+    pbd_tokens = [anchor, *([int(text_mask_token_id)] * 5)]
+    embeds, positions, mask, active_len = build_prefill_inputs(
+        text_model,
+        payload,
+        rotation,
+        chunk_size=chunk_size,
+        cache_len=cache_len,
+        image_token_id=image_token_id,
+        device=device,
+        dtype=dtype,
+        mask_value=mask_value,
+        suffix_token_ids=suffix,
+        right_aligned=True,
+    )
+    if active_len != committed_len:
+        raise RuntimeError("fused Prefill active length mismatch")
+
+    pbd_ids = torch.tensor(pbd_tokens, device=device, dtype=torch.long)
+    embeds[0, :6] = text_model.embed_tokens(pbd_ids).to(dtype=dtype)
+    positions[:, :, :6] = torch.arange(
+        committed_len - 1,
+        committed_len + 5,
+        device=device,
+        dtype=torch.int32,
+    )
+    current_start = cache_len - chunk_size
+    row_offset = chunk_size - committed_len
+    mask[:, :, :6, :] = mask_value
+    mask[:, :, :6, current_start : current_start + 6] = 0
+    if committed_len > 1:
+        mask[
+            :, :, :6,
+            current_start + row_offset : current_start + chunk_size - 1,
+        ] = 0
+    return embeds, positions, mask, committed_len
+
+
+def build_runtime_prefill_inputs(
+    text_model: Any,
+    payload: dict[str, Any],
+    rotation: torch.Tensor,
+    *,
+    chunk_size: int,
+    cache_len: int,
+    image_token_id: int,
+    text_mask_token_id: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    fuse_initial_pbd: bool,
+    mask_value: float = -32768.0,
+    suffix_token_ids: Iterable[int] | None = None,
+) -> RuntimePrefillInputs:
+    """Build the exact static Prefill layout selected by the runtime contract."""
+    prompt_len = int(payload["prompt_attention_mask"].reshape(-1).sum().item())
+    suffix = tuple(int(token_id) for token_id in suffix_token_ids or ())
+    committed_len = prompt_len + len(suffix)
+    can_fuse = fuse_initial_pbd and committed_len + 6 <= chunk_size
+    if can_fuse:
+        embeds, positions, mask, active_len = build_fused_prefill_pbd_inputs(
+            text_model,
+            payload,
+            rotation,
+            chunk_size=chunk_size,
+            cache_len=cache_len,
+            image_token_id=image_token_id,
+            text_mask_token_id=text_mask_token_id,
+            device=device,
+            dtype=dtype,
+            mask_value=mask_value,
+            suffix_token_ids=suffix,
+        )
+        source_start = chunk_size - active_len
+    else:
+        embeds, positions, mask, active_len = build_prefill_inputs(
+            text_model,
+            payload,
+            rotation,
+            chunk_size=chunk_size,
+            cache_len=cache_len,
+            image_token_id=image_token_id,
+            device=device,
+            dtype=dtype,
+            mask_value=mask_value,
+            suffix_token_ids=suffix,
+            right_aligned=fuse_initial_pbd,
+        )
+        source_start = chunk_size - active_len if fuse_initial_pbd else 0
+    return RuntimePrefillInputs(
+        embeds,
+        positions,
+        mask,
+        active_len,
+        source_start,
+        can_fuse,
+    )
 
 
 def build_right_aligned_caches(
@@ -191,18 +347,31 @@ def build_right_aligned_caches(
     *,
     active_len: int,
     cache_len: int,
+    source_start: int = 0,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     keys: list[torch.Tensor] = []
     values: list[torch.Tensor] = []
     for new_key, new_value in zip(new_keys, new_values):
+        if (
+            active_len < 1
+            or source_start < 0
+            or source_start + active_len > new_key.shape[1]
+            or new_key.shape != new_value.shape
+        ):
+            raise ValueError(
+                "invalid Prefill cache slice: "
+                f"source_start={source_start}, active_len={active_len}, "
+                f"key={tuple(new_key.shape)}, value={tuple(new_value.shape)}"
+            )
         key_cache = torch.zeros(
             (new_key.shape[0], cache_len, new_key.shape[2], new_key.shape[3]),
             device=new_key.device,
             dtype=new_key.dtype,
         )
         value_cache = torch.zeros_like(key_cache)
-        key_cache[:, -active_len:] = new_key[:, :active_len]
-        value_cache[:, -active_len:] = new_value[:, :active_len]
+        source_end = source_start + active_len
+        key_cache[:, -active_len:] = new_key[:, source_start:source_end]
+        value_cache[:, -active_len:] = new_value[:, source_start:source_end]
         keys.append(key_cache)
         values.append(value_cache)
     return keys, values

@@ -1,4 +1,10 @@
-"""Language Float and eager-QDQ helpers for LocateAnything validation."""
+"""Legacy stable_672 Float/eager-QDQ diagnostic helpers.
+
+This module is intentionally outside ``compiler/quantize.py`` and only models
+the historical three-graph, Prefill 1024 / KV 4096 ABI. It must not be used to
+accept ``fast_336`` or fused/compact Language artifacts. The production
+13-graph contract is validated by ``pipeline.language_build``.
+"""
 
 from __future__ import annotations
 

@@ -212,13 +212,20 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     language = _mapping(config.get("language"), "language")
     required_language = {"chunk_size", "cache_len"}
-    if set(language) != required_language:
+    optional_language = {"compact_logits", "fuse_initial_pbd"}
+    if (
+        not required_language <= set(language)
+        or set(language) - required_language - optional_language
+    ):
         missing = sorted(required_language - set(language))
-        extra = sorted(set(language) - required_language)
+        extra = sorted(set(language) - required_language - optional_language)
         details = [*(f"missing {name}" for name in missing), *(f"unknown {name}" for name in extra)]
         raise ConfigurationError("invalid language fields: " + ", ".join(details))
     chunk_size = _positive_int(language.get("chunk_size"), "language.chunk_size")
     cache_len = _positive_int(language.get("cache_len"), "language.cache_len")
+    for name in sorted(optional_language):
+        if name in language and type(language[name]) is not bool:
+            raise ConfigurationError(f"language.{name} must be true or false")
     if not 128 <= chunk_size <= 2048 or not 256 <= cache_len <= 4096:
         raise ConfigurationError(
             "language.chunk_size must be in [128, 2048] and cache_len in [256, 4096]"
@@ -570,6 +577,8 @@ def calibrate_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[
         "VISION_W_BITS": str(quantization["vision_weight_bits"]),
         "LANGUAGE_W_BITS": str(quantization["language_weight_bits"]),
         "LM_HEAD_W_BITS": str(quantization["lm_head_weight_bits"]),
+        "COMPACT_LOGITS": "1" if language.get("compact_logits", False) else "0",
+        "FUSE_INITIAL_PBD": "1" if language.get("fuse_initial_pbd", False) else "0",
         "DETAILED_STATISTICS": "1" if calibration["detailed_statistics"] else "0",
         "MAX_SAMPLES": str(requested_samples),
         "CHECKPOINT_SAMPLES": str(requested_checkpoint),
@@ -668,6 +677,8 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
                 "PREFILL_CORE_NUM": str(cores["prefill"]),
                 "DECODE_CORE_NUM": str(cores["pbd"]),
                 "AR_CORE_NUM": str(cores["ar"]),
+                "COMPACT_LOGITS": "1" if language.get("compact_logits", False) else "0",
+                "FUSE_INITIAL_PBD": "1" if language.get("fuse_initial_pbd", False) else "0",
             })
             script = PIPELINE_ROOT / "build_language.sh"
         steps.append(
@@ -718,6 +729,8 @@ def print_build_summary(config: Mapping[str, Any]) -> None:
         "lm_head_w_bits": quantization["lm_head_weight_bits"],
         "language_graph_count": len(LANGUAGE_GRAPHS),
         "sampling": "host",
+        "compact_logits": language.get("compact_logits", False),
+        "fuse_initial_pbd": language.get("fuse_initial_pbd", False),
     }
     details = "  ".join(f"{key}={value}" for key, value in payload.items())
     print_console_line(

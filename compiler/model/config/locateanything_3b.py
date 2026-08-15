@@ -101,6 +101,8 @@ class Qwen2PBDTextConfig:
     # Compile-time knobs (overwritten by LocateAnythingApi from CLI flags)
     prefill_seq_len: int = 1024      # from --chunk_size
     prefill_last_token_only: bool = True
+    compact_logits: bool = False
+    fuse_initial_pbd: bool = False
     cache_len: int = 4096            # from --cache_len
     decode_seq_len: int = 6          # default matches block_size — the PBD path
     batch_size: int = 1

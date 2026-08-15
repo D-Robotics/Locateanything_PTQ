@@ -30,7 +30,7 @@ from pipeline.replay import (  # noqa: E402
     ActivationTracker,
     DECODE_CONTEXT_POLICY,
     build_decode_inputs,
-    build_prefill_inputs,
+    build_runtime_prefill_inputs,
     build_right_aligned_caches,
     compare_snapshots,
     load_tensor_payload,
@@ -270,6 +270,7 @@ def run(args: argparse.Namespace) -> int:
     language_snapshots = {}
     language_required_point_count = None
     stage_counts = Counter()
+    prefill_mode_counts = Counter()
     decode_context_records: list[dict[str, Any]] = []
     activation_rows: list[dict[str, Any]] = []
 
@@ -335,6 +336,8 @@ def run(args: argparse.Namespace) -> int:
             lm_head_w_bits=args.lm_head_w_bits,
             hidden_rotation_path=args.hidden_rotation_path,
             apply_hidden_rotation=True, export_only=True,
+            compact_logits=args.compact_logits,
+            fuse_initial_pbd=args.fuse_initial_pbd,
         )
         language = language_api.text_model.to(device=device, dtype=dtype).eval()
         language.compile_mode(False)
@@ -361,12 +364,27 @@ def run(args: argparse.Namespace) -> int:
                 )
                 for replay_context in replay_contexts:
                     language_tracker.stage = "prefill"
-                    embeds, positions, mask, active_len = build_prefill_inputs(
-                        language, payload, rotation, chunk_size=args.chunk_size,
-                        cache_len=args.cache_len, image_token_id=args.image_token_id,
-                        device=device, dtype=dtype,
+                    language.set_compile_output_rows(
+                        7 if args.fuse_initial_pbd else (
+                            1 if args.compact_logits else None
+                        ),
+                        fused_prefill=args.fuse_initial_pbd,
+                    )
+                    prefill = build_runtime_prefill_inputs(
+                        language,
+                        payload,
+                        rotation,
+                        chunk_size=args.chunk_size,
+                        cache_len=args.cache_len,
+                        image_token_id=args.image_token_id,
+                        text_mask_token_id=int(language.config.text_mask_token_id),
+                        device=device,
+                        dtype=dtype,
+                        fuse_initial_pbd=args.fuse_initial_pbd,
                         suffix_token_ids=replay_context.suffix_token_ids,
                     )
+                    embeds, positions, mask = prefill[:3]
+                    active_len = prefill.committed_len
                     if active_len != replay_context.past_len:
                         raise RuntimeError(
                             f"{replay_context.context_id}: Prefill active_len={active_len} "
@@ -379,11 +397,15 @@ def run(args: argparse.Namespace) -> int:
                         embeds, positions, mask, *zero_caches
                     )
                     stage_counts["prefill"] += 1
+                    prefill_mode_counts[
+                        "fused" if prefill.fused_initial_pbd else "fallback"
+                    ] += 1
                     del logits
                     cache_keys, cache_values = build_right_aligned_caches(
                         new_keys, new_values,
                         active_len=active_len,
                         cache_len=args.cache_len,
+                        source_start=prefill.cache_source_start,
                     )
 
                     pbd_tokens = select_pbd_tokens(
@@ -393,6 +415,9 @@ def run(args: argparse.Namespace) -> int:
                         anchor_token_id=replay_context.anchor_token_id,
                     )
                     language_tracker.stage = "pbd_q6"
+                    language.set_compile_output_rows(
+                        6 if args.compact_logits else None
+                    )
                     pbd_embeds, pbd_pos, pbd_mask = build_decode_inputs(
                         language, pbd_tokens, q_len=6, past_len=active_len,
                         cache_len=args.cache_len, is_pbd=True,
@@ -415,6 +440,9 @@ def run(args: argparse.Namespace) -> int:
                         q_len = prefix_len + 6
                         stage = f"pbd_q{q_len}"
                         language_tracker.stage = stage
+                        language.set_compile_output_rows(
+                            6 if args.compact_logits else None
+                        )
                         decode_embeds, decode_pos, decode_mask = build_decode_inputs(
                             language, decode_tokens, q_len=q_len, past_len=active_len,
                             cache_len=args.cache_len, is_pbd=True,
@@ -431,6 +459,9 @@ def run(args: argparse.Namespace) -> int:
                         ar_tokens = list(replay_context.pending_token_ids[:q_len])
                         stage = f"ar_q{q_len}"
                         language_tracker.stage = stage
+                        language.set_compile_output_rows(
+                            1 if args.compact_logits else None
+                        )
                         ar_embeds, ar_pos, ar_mask = build_decode_inputs(
                             language, ar_tokens, q_len=q_len, past_len=active_len,
                             cache_len=args.cache_len, is_pbd=False,
@@ -488,6 +519,8 @@ def run(args: argparse.Namespace) -> int:
             "cache_len": args.cache_len,
             "pbd_query_len": 6,
             "ar_query_len": 1,
+            "compact_logits": args.compact_logits,
+            "fuse_initial_pbd": args.fuse_initial_pbd,
             "vision_weight_bits": args.vision_w_bits,
             "detailed_statistics": args.detailed_statistics,
         },
@@ -504,7 +537,11 @@ def run(args: argparse.Namespace) -> int:
             "pbd_total_query_lengths": list(range(6, 13)),
             "ar_total_query_lengths": list(range(1, 6)),
             "ar_q1_calls_per_context": 1,
-            "pbd_q6_role": "post_prefill_bootstrap_only",
+            "pbd_q6_role": (
+                "runtime_fallback_and_graph_coverage"
+                if args.fuse_initial_pbd
+                else "post_prefill_bootstrap"
+            ),
             "pbd_input_protocol": "accepted_prefix_plus_duplicated_anchor_plus_5_text_masks",
             "decode_context_policy": DECODE_CONTEXT_POLICY,
         })
@@ -532,6 +569,7 @@ def run(args: argparse.Namespace) -> int:
         "task_counts": task_counts,
         "profile": scale_manifest["profile"],
         "stage_execution_counts": stage_execution_counts,
+        "prefill_mode_counts": dict(sorted(prefill_mode_counts.items())),
         "expected_stage_execution_counts": expected_stage_execution_counts,
         "expected_stages": expected_stages,
         "all_stages_executed": stage_execution_counts == expected_stage_execution_counts,
@@ -684,6 +722,8 @@ def parser() -> argparse.ArgumentParser:
         help="comma-separated convergence checkpoints; full is always included",
     )
     result.add_argument("--image-token-id", type=int, default=151665)
+    result.add_argument("--compact-logits", action="store_true")
+    result.add_argument("--fuse-initial-pbd", action="store_true")
     result.add_argument("--hidden-rotation-path")
     result.add_argument("--replay-seed", type=int, default=20260729)
     result.add_argument(

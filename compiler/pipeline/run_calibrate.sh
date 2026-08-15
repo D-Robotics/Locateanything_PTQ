@@ -48,6 +48,8 @@ HIDDEN_ROTATION_PATH=${HIDDEN_ROTATION_PATH:-}
 RESUME=${RESUME:-0}
 DETACH=${DETACH:-0}
 DETAILED_STATISTICS=${DETAILED_STATISTICS:-0}
+COMPACT_LOGITS=${COMPACT_LOGITS:-0}
+FUSE_INITIAL_PBD=${FUSE_INITIAL_PBD:-0}
 
 [[ "$DTYPE" == "float16" || "$DTYPE" == "bfloat16" ]] || {
   echo "DTYPE must be float16 or bfloat16; got $DTYPE" >&2
@@ -63,6 +65,14 @@ DETAILED_STATISTICS=${DETAILED_STATISTICS:-0}
 }
 [[ "$DETAILED_STATISTICS" == "0" || "$DETAILED_STATISTICS" == "1" ]] || {
   echo "DETAILED_STATISTICS must be 0 or 1; got $DETAILED_STATISTICS" >&2
+  exit 1
+}
+[[ "$COMPACT_LOGITS" == "0" || "$COMPACT_LOGITS" == "1" ]] || {
+  echo "COMPACT_LOGITS must be 0 or 1; got $COMPACT_LOGITS" >&2
+  exit 1
+}
+[[ "$FUSE_INITIAL_PBD" == "0" || "$FUSE_INITIAL_PBD" == "1" ]] || {
+  echo "FUSE_INITIAL_PBD must be 0 or 1; got $FUSE_INITIAL_PBD" >&2
   exit 1
 }
 
@@ -112,7 +122,8 @@ write_initial_metadata() {
     "$CHECKPOINT_SAMPLES" "$IMAGE_TOKEN_ID" "$CALIBRATION_COMPONENT" \
     "$VISION_W_BITS" "$LANGUAGE_W_BITS" "$LM_HEAD_W_BITS" "$REPLAY_SEED" \
     "$IMAGE_WIDTH" "$IMAGE_HEIGHT" "$RESIZE_MODE" "$LETTERBOX_FILL" \
-    "$HIDDEN_ROTATION_PATH" "$LOG_PATH" "$DETAILED_STATISTICS" "$REPO_ROOT" <<'PY'
+    "$HIDDEN_ROTATION_PATH" "$LOG_PATH" "$DETAILED_STATISTICS" "$REPO_ROOT" \
+    "$COMPACT_LOGITS" "$FUSE_INITIAL_PBD" <<'PY'
 import json
 import os
 import socket
@@ -124,7 +135,7 @@ from pathlib import Path
     dtype, chunk, cache, max_samples, checkpoint, image_token, component,
     vision_w_bits, language_w_bits, lm_head_w_bits, replay_seed,
     image_width, image_height, resize_mode, letterbox_fill, rotation,
-    log_path, detailed_statistics, repo_root,
+    log_path, detailed_statistics, repo_root, compact_logits, fuse_initial_pbd,
 ) = sys.argv[1:]
 sys.path.insert(0, str(Path(repo_root) / "compiler"))
 from model.graphs import CALIBRATION_STAGES
@@ -164,6 +175,8 @@ value = {
     "lm_head_w_bits": int(lm_head_w_bits),
     "replay_seed": int(replay_seed),
     "detailed_statistics": detailed_statistics == "1",
+    "compact_logits": compact_logits == "1",
+    "fuse_initial_pbd": fuse_initial_pbd == "1",
     "hidden_rotation_path": rotation or None,
     "expected_graph_paths": expected_graph_paths,
     "log_path": log_path,
@@ -233,7 +246,7 @@ write_exit_record running
 write_initial_metadata
 
 echo "[calibrate] manifest=$GENERATED_JSONL" | tee -a "$LOG_PATH"
-echo "[calibrate] output=$OUTPUT_DIR component=$CALIBRATION_COMPONENT device=$DEVICE dtype=$DTYPE samples=$MAX_SAMPLES checkpoint=$CHECKPOINT_SAMPLES image=${IMAGE_WIDTH}x${IMAGE_HEIGHT} resize=$RESIZE_MODE fill=$LETTERBOX_FILL vision_w_bits=$VISION_W_BITS language_w_bits=$LANGUAGE_W_BITS lm_head_w_bits=$LM_HEAD_W_BITS detailed_statistics=$DETAILED_STATISTICS replay_seed=$REPLAY_SEED" | tee -a "$LOG_PATH"
+echo "[calibrate] output=$OUTPUT_DIR component=$CALIBRATION_COMPONENT device=$DEVICE dtype=$DTYPE samples=$MAX_SAMPLES checkpoint=$CHECKPOINT_SAMPLES image=${IMAGE_WIDTH}x${IMAGE_HEIGHT} resize=$RESIZE_MODE fill=$LETTERBOX_FILL vision_w_bits=$VISION_W_BITS language_w_bits=$LANGUAGE_W_BITS lm_head_w_bits=$LM_HEAD_W_BITS compact_logits=$COMPACT_LOGITS fuse_initial_pbd=$FUSE_INITIAL_PBD detailed_statistics=$DETAILED_STATISTICS replay_seed=$REPLAY_SEED" | tee -a "$LOG_PATH"
 
 replay_args=(
   --generated-jsonl "$GENERATED_JSONL"
@@ -259,6 +272,12 @@ replay_args=(
 )
 if [[ "$DETAILED_STATISTICS" == "1" ]]; then
   replay_args+=(--detailed-statistics)
+fi
+if [[ "$COMPACT_LOGITS" == "1" ]]; then
+  replay_args+=(--compact-logits)
+fi
+if [[ "$FUSE_INITIAL_PBD" == "1" ]]; then
+  replay_args+=(--fuse-initial-pbd)
 fi
 if [[ -n "$HIDDEN_ROTATION_PATH" ]]; then
   replay_args+=(--hidden-rotation-path "$HIDDEN_ROTATION_PATH")

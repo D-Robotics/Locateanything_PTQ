@@ -105,6 +105,8 @@ class LocateAnythingTextModel(Model):
         self.use_plugin = use_plugin
         self.tie_word_embeddings = getattr(config, "tie_word_embeddings", True)
         self.config = config
+        self._compile_output_rows: int | None = None
+        self._compile_fused_prefill_output = False
 
         self.embed_tokens = Embedding(config.vocab_size, config.hidden_size)
         self.norm = RMSNorm(
@@ -153,6 +155,17 @@ class LocateAnythingTextModel(Model):
             self.quant_sin = QuantStub()
             self.quant_attention_mask = QuantStub()
         self.dequant = DeQuantStub()
+
+    def set_compile_output_rows(
+        self, rows: int | None, *, fused_prefill: bool = False
+    ) -> None:
+        """Select sequence rows emitted by the static export graph."""
+        if rows is not None and rows < 1:
+            raise ValueError("compile output row count must be positive")
+        if fused_prefill and rows != 7:
+            raise ValueError("fused Prefill output requires seven logits rows")
+        self._compile_output_rows = rows
+        self._compile_fused_prefill_output = fused_prefill
 
     def get_input_embeddings(self):
         """
@@ -239,16 +252,34 @@ class LocateAnythingTextModel(Model):
             new_values.append(nv)
 
         hidden_states = self.norm(hidden_states)
-        if (
-            getattr(self.config, "prefill_last_token_only", True)
-            and num_tokens == self.config.prefill_seq_len
-        ):
-            hidden_states = leap.slice(
+        output_rows = self._compile_output_rows
+        if self._compile_fused_prefill_output:
+            ar_hidden = leap.slice(
                 hidden_states,
                 [0, num_tokens - 1, 0],
                 [bs, num_tokens, self.hidden_size],
                 [1, 1, 1],
             )
+            pbd_hidden = leap.slice(
+                hidden_states,
+                [0, 0, 0],
+                [bs, 6, self.hidden_size],
+                [1, 1, 1],
+            )
+            hidden_states = leap.concat([ar_hidden, pbd_hidden], 1)
+        else:
+            if output_rows is None and (
+                getattr(self.config, "prefill_last_token_only", True)
+                and num_tokens == self.config.prefill_seq_len
+            ):
+                output_rows = 1
+            if output_rows is not None and output_rows < num_tokens:
+                hidden_states = leap.slice(
+                    hidden_states,
+                    [0, num_tokens - output_rows, 0],
+                    [bs, num_tokens, self.hidden_size],
+                    [1, 1, 1],
+                )
         logits = self.lm_head(hidden_states)
         logits = self.dequant(logits)
         return (logits, *new_keys, *new_values)
@@ -296,6 +327,13 @@ class LocateAnythingTextModel(Model):
             new_values.append(nv)
 
         hidden_states = self.norm(hidden_states)
+        output_rows = self._compile_output_rows
+        if self._compile_fused_prefill_output:
+            hidden_states = torch.cat(
+                (hidden_states[:, -1:, :], hidden_states[:, :6, :]), dim=1
+            )
+        elif output_rows is not None and output_rows < num_tokens:
+            hidden_states = hidden_states[:, -output_rows:, :]
         logits = self.lm_head(hidden_states)
         return logits, new_keys, new_values
 

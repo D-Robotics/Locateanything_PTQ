@@ -23,6 +23,7 @@ from model.base import (
     standard_token_embeddings_name,
 )
 from model.layers import DynamicQuantLinear
+from model.contract import language_output_shapes
 
 from model.config.locateanything_3b import (
     load_config_from_json,
@@ -34,6 +35,48 @@ from model.rotation import (
 )
 from model.state_dict import load_state_dict_strict
 from model.graphs import LANGUAGE_GRAPHS
+
+
+def validate_exported_language_graph(
+    module,
+    graph: str,
+    *,
+    chunk_size: int,
+    num_layers: int,
+    compact_logits: bool,
+    fuse_initial_pbd: bool,
+) -> None:
+    """Reject an exported Language graph whose output ABI is inconsistent."""
+    functions = list(module.functions)
+    if len(functions) != 1 or str(functions[0].name) != graph:
+        names = [str(function.name) for function in functions]
+        raise RuntimeError(f"exported {graph} BC contains functions {names}")
+    outputs = list(functions[0].outputs)
+    expected_count = 1 + 2 * num_layers
+    if len(outputs) != expected_count:
+        raise RuntimeError(
+            f"exported {graph} BC has {len(outputs)} outputs; "
+            f"expected {expected_count}"
+        )
+    expected_logits, expected_update = language_output_shapes(
+        graph,
+        chunk_size,
+        compact_logits=compact_logits,
+        fuse_initial_pbd=fuse_initial_pbd,
+    )
+    actual_logits = tuple(outputs[0].type.shape)
+    if actual_logits != expected_logits:
+        raise RuntimeError(
+            f"exported {graph} logits are {actual_logits}; "
+            f"expected {expected_logits}"
+        )
+    for index, output in enumerate(outputs[1:], 1):
+        actual = tuple(output.type.shape)
+        if actual != expected_update:
+            raise RuntimeError(
+                f"exported {graph} KV output[{index}] is {actual}; "
+                f"expected {expected_update}"
+            )
 
 
 def remap_language_state_dict(raw_sd: dict) -> dict:
@@ -101,6 +144,8 @@ class LocateAnythingLanguageApi:
         apply_hidden_rotation: bool = True,
         export_only: bool = False,
         calibration_scale_manifest: Optional[str] = None,
+        compact_logits: bool = False,
+        fuse_initial_pbd: bool = False,
     ) -> None:
         """
         Function:
@@ -125,6 +170,8 @@ class LocateAnythingLanguageApi:
             apply_hidden_rotation: Whether to apply the rotation.
             export_only: Stop after BC export.
             calibration_scale_manifest: Optional PTQ scale manifest.
+            compact_logits: Emit only logits rows consumed by Host decoding.
+            fuse_initial_pbd: Append the initial six-token PBD window to Prefill.
         """
         if w_bits not in {4, 8}:
             raise ValueError(f"decoder w_bits must be 4 or 8, got {w_bits}")
@@ -150,6 +197,8 @@ class LocateAnythingLanguageApi:
         self.apply_hidden_rotation = apply_hidden_rotation
         self.export_only = export_only
         self.calibration_scale_manifest = calibration_scale_manifest
+        self.compact_logits = compact_logits
+        self.fuse_initial_pbd = fuse_initial_pbd
 
         os.makedirs(output_model_path, exist_ok=True)
         self.output_lm_model_path = standard_lm_name(
@@ -177,6 +226,8 @@ class LocateAnythingLanguageApi:
         tc.batch_size = batch_size
         tc.w_bits = w_bits
         tc.lm_head_w_bits = lm_head_w_bits
+        tc.compact_logits = compact_logits
+        tc.fuse_initial_pbd = fuse_initial_pbd
         tc.has_scale = False
 
         print("[LocateAnythingLanguageApi] adapted text_config:")
@@ -323,17 +374,20 @@ class LocateAnythingLanguageApi:
                 "LocateAnything Language BC export requires a release calibration scale manifest"
             )
         from pipeline.replay import apply_scale_manifest
+        expected_scale_profile = {
+            "chunk_size": self.chunk_size,
+            "cache_len": self.cache_len,
+            "pbd_query_len": self.decode_seq_len,
+            "language_decoder_weight_bits": self.w_bits,
+            "language_lm_head_weight_bits": self.lm_head_w_bits,
+            "compact_logits": self.compact_logits,
+            "fuse_initial_pbd": self.fuse_initial_pbd,
+        }
         restored = apply_scale_manifest(
             self.text_model,
             Path(self.calibration_scale_manifest),
             "language",
-            expected_profile={
-                "chunk_size": self.chunk_size,
-                "cache_len": self.cache_len,
-                "pbd_query_len": self.decode_seq_len,
-                "language_decoder_weight_bits": self.w_bits,
-                "language_lm_head_weight_bits": self.lm_head_w_bits,
-            },
+            expected_profile=expected_scale_profile,
         )
         print(f"[LocateAnythingLanguageApi] restored calibration: {restored}")
         self.text_model.compile_mode(True)
@@ -375,10 +429,28 @@ class LocateAnythingLanguageApi:
             )
         bc_modules = []
         for stage_name, inputs in stage_inputs.items():
+            if stage_name == "prefill":
+                output_rows = 7 if self.fuse_initial_pbd else 1
+            elif self.compact_logits:
+                output_rows = 1 if stage_name.startswith("decode_ar") else 6
+            else:
+                output_rows = None
+            self.text_model.set_compile_output_rows(
+                output_rows,
+                fused_prefill=(stage_name == "prefill" and self.fuse_initial_pbd),
+            )
             print(f"[LocateAnythingLanguageApi] export {stage_name}...")
             bc_path = str(Path(self.output_lm_model_path).with_suffix(f".{stage_name}.bc"))
             bc = self.text_model.export_module(
                 inputs, stage_name, bc_path, high_precision_qpp=True,
+            )
+            validate_exported_language_graph(
+                bc,
+                stage_name,
+                chunk_size=chunk_size,
+                num_layers=num_layers,
+                compact_logits=self.compact_logits,
+                fuse_initial_pbd=self.fuse_initial_pbd,
             )
             bc_modules.append(bc)
 

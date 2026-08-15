@@ -1,7 +1,7 @@
 paths:
   checkpoint: ../models/LocateAnything-3B
   calibration_data: ../datasets/calibration/locateanything/source
-  output_dir: ../outputs/fast_336_prefill256_cache1024_w8
+  output_dir: ../outputs/fast_336_prefill256_cache1024_w8_fused_prefill_compact_logits
 
 outputs:
   vision_hbm: LocateAnything-3B_vision.hbm
@@ -10,7 +10,8 @@ outputs:
 
 calibration:
   slow_samples: 128
-  max_new_tokens: 768
+  # Offline Float prediction cap. Runtime generation remains limited to 768.
+  max_new_tokens: 896
   seed: 20260729
   prepare_dtype: bfloat16
   statistics_dtype: float16
@@ -25,6 +26,10 @@ vision:
 language:
   chunk_size: 256
   cache_len: 1024
+  # These two flags change the Language output ABI and therefore require
+  # independently generated calibration scales and HBM artifacts.
+  compact_logits: true
+  fuse_initial_pbd: true
 
 runtime:
   max_new_tokens: 768
