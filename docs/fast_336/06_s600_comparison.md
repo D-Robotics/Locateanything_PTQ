@@ -1,5 +1,7 @@
 # Stage 7: fast_336 S600 对比验收
 
+> 历史基线记录：本页性能与资源数据来自上一版 fast_336 HBM，不代表当前 fused Prefill、Compact Logits 和 KV Runtime 路径的性能。新 HBM 完成后需使用相同检测输入重新验收。
+
 ## 状态
 
 已完成，2026-08-15。

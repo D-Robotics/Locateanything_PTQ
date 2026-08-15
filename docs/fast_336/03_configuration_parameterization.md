@@ -115,6 +115,6 @@ fast_336 与 stable_672 已共用同一套参数化实现。336 Profile 的编�
 Stage 4 为完整 1200 条 fast_336 校准。开始前必须单独确认以下内容：
 
 1. 校准输入为 HF `source.zip` 对应的 1200 条数据，实际记录数和文件完整性先检查。
-2. `calibration.max_new_tokens=768`，与运行时生成上限一致。
-3. 使用独立目录 `compiler/outputs/fast_336_prefill256_cache1024_w8/`，不复用 stable_672 Scale。
+2. `calibration.max_new_tokens=896` 用于离线 Float 预测；运行时仍为 768。
+3. 使用独立目录 `compiler/outputs/fast_336_prefill256_cache1024_w8_fused_prefill_compact_logits/`，不复用 stable_672 或上一版 fast_336 Scale。
 4. 先列出 4090 环境、输入、命令、预计产物和验收条件，再获得确认后启动长时任务。

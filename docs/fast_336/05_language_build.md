@@ -1,5 +1,7 @@
 # Stage 6: fast_336 Language 构建
 
+> 历史基线记录：本页 HBM 的 Prefill/PBD/AR Logits 为 `1/q/q`，不包含 fused Prefill 或 Compact Logits。当前目标 ABI 为 `7/6/1`，必须使用新的校准 Scale 和独立输出目录重新构建。
+
 ## 状态
 
 已完成并通过验收。13 个 Source BC、13 个 Converted BC、13 个 4-Core HBO、Token Embedding 和最终 Language HBM 均已构建；独立 `--resume` 复验和 13 图 HBM ABI 审计均通过。

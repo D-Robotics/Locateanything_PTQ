@@ -1,5 +1,7 @@
 # LocateAnything fast_336 最终汇总
 
+> 上一版基线汇总：本页结论截至 2026-08-15，不包含后续 fused Prefill、Compact Logits 和 KV Runtime 优化。当前优化状态见 `07_language_runtime_optimization.md`。
+
 ## 状态
 
 fast_336 已完成 Float 验证、参数化、1200 条独立校准、Vision HBM、Language HBM、S600 Console/ROS 检测和 stable_672 对比验收，2026-08-15。

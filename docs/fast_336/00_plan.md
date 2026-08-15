@@ -7,11 +7,12 @@
 | 1 | Float 224 结构验证 | 已通过 | `01_float_224_validation.md` |
 | 2 | Float 分辨率精度对比 | 已完成；224 未通过，336 经全视频复核后选为 fast 候选 | `02_float_accuracy_comparison.md` |
 | 3 | 配置参数化与双 Profile 共用实现 | 代码完成；本地契约验证通过 | `03_configuration_parameterization.md` |
-| 4 | 1200 条 fast_336 校准 | 已完成并通过验收 | `03_calibration.md` |
+| 4 | 1200 条 fast_336 校准 | 上一版基线已完成；fused/compact 需重新校准 | `03_calibration.md` |
 | 5 | Vision 编译与逐级验证 | 已完成并通过验收 | `04_vision_build.md` |
-| 6 | Language 编译与逐级验证 | 已完成并通过验收 | `05_language_build.md` |
-| 7 | S600 对比验收 | 已完成并通过工程验收，数值偏差完整保留 | `06_s600_comparison.md` |
-| 8 | 最终汇总 | 已完成 | `FINAL_SUMMARY.md` |
+| 6 | Language 编译与逐级验证 | 上一版基线已完成；fused/compact 尚未生产编译 | `05_language_build.md` |
+| 7 | S600 对比验收 | 上一版基线已完成；新 HBM 尚未板端验收 | `06_s600_comparison.md` |
+| 8 | 基线汇总 | 已完成 | `FINAL_SUMMARY.md` |
+| 9 | fused Prefill、Compact Logits 与 Runtime 优化 | 代码和本地契约验证完成；等待生产校准/编译 | `07_language_runtime_optimization.md` |
 
 ## 已确认 Profile
 
@@ -44,19 +45,19 @@ fast_336 仅对目标检测、帧率、阶段耗时和资源占用进行对比�
 6. 每个长时阶段开始前单独列出输入、输出和验收条件；按用户当前授权连续执行，仅在参数决策、破坏性操作或验收失败时暂停。
 7. fast_336 通过后，未采用的 fast_224 运行产物移入回收站；stable_672 始终保留。
 
-## 校准生成上限
+## 生成上限
 
-Prepare 阶段的 Float 预测和运行时统一使用 `max_new_tokens=768`。数据集标准答案会单独保存为 `target_token_ids`，不由 Prepare 的生成上限截断；因此不再使用 896 这一额外上限。
+离线 Prepare 使用 `calibration.max_new_tokens=896`，覆盖校准集中已观测到的长输出；板端运行仍使用 `runtime.max_new_tokens=768`。两者用途不同，不共用一个上限。
 
 ```yaml
 calibration:
-  max_new_tokens: 768
+  max_new_tokens: 896
 
 runtime:
   max_new_tokens: 768
 ```
 
-`Prefill 256 + max_new_tokens 768 = KV Cache 1024`，与 fast_336 的 Language 图固定容量一致。
+Runtime 的 `Prefill 256 + max_new_tokens 768 = KV Cache 1024`。离线 896 只控制 Float 预测生成，不改变 HBM 的 KV Cache 容量。
 
 ## 阶段记录要求
 

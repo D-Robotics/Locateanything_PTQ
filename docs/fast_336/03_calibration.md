@@ -1,5 +1,7 @@
 # Stage 4: fast_336 1200 条校准
 
+> 历史基线记录：本页对应上一版 Host Sampling ABI，产物目录为 `compiler/outputs/fast_336_prefill256_cache1024_w8/`。当前 `fuse_initial_pbd=true`、`compact_logits=true` 会改变 Language 图与校准覆盖，本页 Scale 不能用于本轮优化 HBM。
+
 ## 状态
 
 已完成并通过验收。
