@@ -142,12 +142,19 @@ def validate_config(config: Mapping[str, Any]) -> None:
     required_paths = {
         "checkpoint", "calibration_data", "output_dir",
     }
+    optional_paths = {"calibration_scale_manifest"}
     missing_paths = sorted(required_paths - set(paths))
     if missing_paths:
         raise ConfigurationError(f"paths is missing: {', '.join(missing_paths)}")
-    extra_paths = sorted(set(paths) - required_paths)
+    extra_paths = sorted(set(paths) - required_paths - optional_paths)
     if extra_paths:
         raise ConfigurationError(f"paths contains unknown fields: {', '.join(extra_paths)}")
+    if "calibration_scale_manifest" in paths:
+        value = paths["calibration_scale_manifest"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(
+                "paths.calibration_scale_manifest must be a non-empty path"
+            )
 
     outputs = _mapping(config.get("outputs"), "outputs")
     required_outputs = {"vision_hbm", "language_hbm", "embedding_bin"}
@@ -328,13 +335,18 @@ def resolve_path(config: Mapping[str, Any], key: str) -> Path:
     checkpoint = _resolve_config_path(config_dir, paths["checkpoint"])
     calibration_data = _resolve_config_path(config_dir, paths["calibration_data"])
     output_dir = _resolve_config_path(config_dir, paths["output_dir"])
+    scale_manifest = (
+        _resolve_config_path(config_dir, paths["calibration_scale_manifest"])
+        if "calibration_scale_manifest" in paths
+        else output_dir / "calibration" / "statistics" / "calibration_scale_manifest.json"
+    )
     resolved = {
         "model": checkpoint,
         "selected_jsonl": calibration_data / "selected.jsonl",
         "generated_dir": output_dir / "calibration" / "generated",
         "generated_jsonl": output_dir / "calibration" / "generated" / "generated.jsonl",
         "calibration_dir": output_dir / "calibration" / "statistics",
-        "scale_manifest": output_dir / "calibration" / "statistics" / "calibration_scale_manifest.json",
+        "scale_manifest": scale_manifest,
         "coverage_json": output_dir / "calibration" / "statistics" / "calibration_graph_coverage.json",
         "build_root": output_dir / "build",
         "log_root": output_dir / "logs",

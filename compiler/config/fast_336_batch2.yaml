@@ -1,7 +1,8 @@
 paths:
   checkpoint: ../models/LocateAnything-3B
   calibration_data: ../datasets/calibration/locateanything/source
-  output_dir: ../outputs/fast_336_prefill256_cache1024_w8_fused_prefill_compact_logits
+  output_dir: ../outputs/fast_336_prefill256_cache1024_w8_batch2
+  calibration_scale_manifest: ../outputs/fast_336_prefill256_cache1024_w8_fused_prefill_compact_logits/calibration/statistics/calibration_scale_manifest.json
 
 outputs:
   vision_hbm: LocateAnything-3B_vision.hbm
