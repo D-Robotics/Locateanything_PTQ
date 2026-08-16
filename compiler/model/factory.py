@@ -136,7 +136,7 @@ def _build_locateanything_lm_3b(args):
         input_model_path=args.input_model_path,
         output_model_path=args.output_model_path,
         chunk_size=args.chunk_size,
-        batch_size=1,
+        batch_size=args.batch_size,
         cache_len=args.cache_len,
         decode_seq_len=args.decode_seq_len,
         device=_primary_device(args),

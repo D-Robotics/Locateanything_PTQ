@@ -17,6 +17,7 @@ W_BITS="${W_BITS:?set by compiler/quantize.py}"
 LM_HEAD_W_BITS="${LM_HEAD_W_BITS:?set by compiler/quantize.py}"
 CHUNK_SIZE="${CHUNK_SIZE:?set by compiler/quantize.py}"
 CACHE_LEN="${CACHE_LEN:?set by compiler/quantize.py}"
+BATCH_SIZE="${BATCH_SIZE:-1}"
 DECODE_SEQ_LEN="${DECODE_SEQ_LEN:?set by compiler/quantize.py}"
 DEVICE="${DEVICE:?set by compiler/quantize.py}"
 PREFILL_CORE_NUM="${PREFILL_CORE_NUM:?set by compiler/quantize.py}"
@@ -80,6 +81,7 @@ cd "$COMPILER_SRC"
   echo "the default fused graph catalog requires DECODE_SEQ_LEN=6"
   exit 1
 }
+[[ "$BATCH_SIZE" == "1" || "$BATCH_SIZE" == "2" ]] || { echo "BATCH_SIZE must be 1 or 2"; exit 1; }
 [[ "$PREFILL_CORE_NUM" == "1" || "$PREFILL_CORE_NUM" == "2" || "$PREFILL_CORE_NUM" == "4" ]] || { echo "PREFILL_CORE_NUM must be 1, 2, or 4"; exit 1; }
 [[ "$DECODE_CORE_NUM" == "1" || "$DECODE_CORE_NUM" == "2" || "$DECODE_CORE_NUM" == "4" ]] || { echo "DECODE_CORE_NUM must be 1, 2, or 4"; exit 1; }
 [[ "$AR_CORE_NUM" == "1" || "$AR_CORE_NUM" == "2" || "$AR_CORE_NUM" == "4" ]] || { echo "AR_CORE_NUM must be 1, 2, or 4"; exit 1; }
@@ -116,6 +118,7 @@ STAGE_ARGS=(
   --jobs "$JOBS"
   --chunk-size "$CHUNK_SIZE"
   --cache-len "$CACHE_LEN"
+  --batch-size "$BATCH_SIZE"
   --language-w-bits "$W_BITS"
   --lm-head-w-bits "$LM_HEAD_W_BITS"
 )
@@ -154,6 +157,7 @@ export_bc() {
     --lm_head_w_bits "$LM_HEAD_W_BITS" \
     --chunk_size "$CHUNK_SIZE" \
     --cache_len "$CACHE_LEN" \
+    --batch_size "$BATCH_SIZE" \
     --decode_seq_len "$DECODE_SEQ_LEN" \
     --calibration_scale_manifest "$CALIBRATION_SCALE_MANIFEST" \
     --device "$DEVICE" \

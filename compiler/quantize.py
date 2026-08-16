@@ -212,7 +212,8 @@ def validate_config(config: Mapping[str, Any]) -> None:
 
     language = _mapping(config.get("language"), "language")
     required_language = {"chunk_size", "cache_len"}
-    optional_language = {"compact_logits", "fuse_initial_pbd"}
+    boolean_language = {"compact_logits", "fuse_initial_pbd"}
+    optional_language = {*boolean_language, "batch_size"}
     if (
         not required_language <= set(language)
         or set(language) - required_language - optional_language
@@ -223,9 +224,12 @@ def validate_config(config: Mapping[str, Any]) -> None:
         raise ConfigurationError("invalid language fields: " + ", ".join(details))
     chunk_size = _positive_int(language.get("chunk_size"), "language.chunk_size")
     cache_len = _positive_int(language.get("cache_len"), "language.cache_len")
-    for name in sorted(optional_language):
+    for name in sorted(boolean_language):
         if name in language and type(language[name]) is not bool:
             raise ConfigurationError(f"language.{name} must be true or false")
+    batch_size = _positive_int(language.get("batch_size", 1), "language.batch_size")
+    if batch_size not in {1, 2}:
+        raise ConfigurationError("language.batch_size must be 1 or 2")
     if not 128 <= chunk_size <= 2048 or not 256 <= cache_len <= 4096:
         raise ConfigurationError(
             "language.chunk_size must be in [128, 2048] and cache_len in [256, 4096]"
@@ -650,6 +654,7 @@ def build_plan(args: argparse.Namespace, config: Mapping[str, Any]) -> list[Plan
             "JOBS": str(build["jobs"]),
             "CHUNK_SIZE": str(language["chunk_size"]),
             "CACHE_LEN": str(language["cache_len"]),
+            "BATCH_SIZE": str(language.get("batch_size", 1)),
             "DECODE_SEQ_LEN": str(PBD_QUERY_LEN),
             "LM_HEAD_W_BITS": str(quantization["lm_head_weight_bits"]),
             "EXPORT_ONLY": "1" if args.target == "bc" else "0",
@@ -725,6 +730,7 @@ def print_build_summary(config: Mapping[str, Any]) -> None:
         "vision_w_bits": quantization["vision_weight_bits"],
         "chunk_size": language["chunk_size"],
         "cache_len": language["cache_len"],
+        "batch_size": language.get("batch_size", 1),
         "language_w_bits": quantization["language_weight_bits"],
         "lm_head_w_bits": quantization["lm_head_weight_bits"],
         "language_graph_count": len(LANGUAGE_GRAPHS),

@@ -42,6 +42,7 @@ def validate_exported_language_graph(
     graph: str,
     *,
     chunk_size: int,
+    batch_size: int,
     num_layers: int,
     compact_logits: bool,
     fuse_initial_pbd: bool,
@@ -61,6 +62,7 @@ def validate_exported_language_graph(
     expected_logits, expected_update = language_output_shapes(
         graph,
         chunk_size,
+        batch_size=batch_size,
         compact_logits=compact_logits,
         fuse_initial_pbd=fuse_initial_pbd,
     )
@@ -448,6 +450,7 @@ class LocateAnythingLanguageApi:
                 bc,
                 stage_name,
                 chunk_size=chunk_size,
+                batch_size=batch_size,
                 num_layers=num_layers,
                 compact_logits=self.compact_logits,
                 fuse_initial_pbd=self.fuse_initial_pbd,

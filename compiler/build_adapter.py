@@ -143,6 +143,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache_len", type=int, default=4096)
     parser.add_argument("--chunk_size", type=int, default=1024)
     parser.add_argument(
+        "--batch_size", type=int, choices=(1, 2), default=1,
+        help="Static Language batch size; batch=2 is an experimental throughput profile.",
+    )
+    parser.add_argument(
         "--decode_seq_len",
         type=int,
         default=6,
@@ -194,6 +198,8 @@ def validate_args(parser: argparse.ArgumentParser, args) -> None:
         parser.error("--cache_len must be in [256, 4096]")
     if not 128 <= args.chunk_size <= 2048:
         parser.error("--chunk_size must be in [128, 2048]")
+    if args.batch_size not in {1, 2}:
+        parser.error("--batch_size must be 1 or 2")
     if args.cache_len <= args.chunk_size:
         parser.error("--cache_len must be greater than --chunk_size")
     if args.cache_len % 64 or args.chunk_size % 64:

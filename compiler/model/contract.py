@@ -171,6 +171,7 @@ def language_output_shapes(
     graph: str,
     chunk_size: int,
     *,
+    batch_size: int = 1,
     compact_logits: bool = False,
     fuse_initial_pbd: bool = False,
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -186,6 +187,8 @@ def language_output_shapes(
         A logits shape and a single-layer KV update shape.
     """
 
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
     query_len = language_query_length(graph, chunk_size)
     if graph == "prefill":
         logits_rows = 7 if fuse_initial_pbd else 1
@@ -196,8 +199,8 @@ def language_output_shapes(
     else:
         logits_rows = query_len
     return (
-        (1, logits_rows, VOCAB_SIZE),
-        (1, query_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM),
+        (batch_size, logits_rows, VOCAB_SIZE),
+        (batch_size, query_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM),
     )
 
 
@@ -206,6 +209,7 @@ def language_io_contract(
     chunk_size: int,
     cache_len: int,
     *,
+    batch_size: int = 1,
     cache_dtype: str = "float32",
     compact_logits: bool = False,
     fuse_initial_pbd: bool = False,
@@ -231,14 +235,17 @@ def language_io_contract(
     logits_shape, update_shape = language_output_shapes(
         graph,
         chunk_size,
+        batch_size=batch_size,
         compact_logits=compact_logits,
         fuse_initial_pbd=fuse_initial_pbd,
     )
-    cache_shape = (1, cache_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM)
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+    cache_shape = (batch_size, cache_len, LANGUAGE_KV_HEAD_COUNT, LANGUAGE_HEAD_DIM)
     inputs = [
-        ((1, query_len, HIDDEN_SIZE), "float16"),
-        ((1, 1, query_len), "int32"),
-        ((1, query_len, cache_len), "float16"),
+        ((batch_size, query_len, HIDDEN_SIZE), "float16"),
+        ((batch_size, 1, query_len), "int32"),
+        ((batch_size, query_len, cache_len), "float16"),
         *[(cache_shape, cache_dtype) for _ in range(LANGUAGE_CACHE_TENSOR_COUNT)],
     ]
     outputs = [

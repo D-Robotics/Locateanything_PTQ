@@ -37,6 +37,7 @@ KNOWN_STAGES = set(LANGUAGE_GRAPHS)
 class LanguageContract:
     chunk_size: int
     cache_len: int
+    batch_size: int = 1
     compact_logits: bool = False
     fuse_initial_pbd: bool = False
 
@@ -58,6 +59,7 @@ def expected_contract(
     return language_output_shapes(
         name,
         contract.chunk_size,
+        batch_size=contract.batch_size,
         compact_logits=contract.compact_logits,
         fuse_initial_pbd=contract.fuse_initial_pbd,
     )
@@ -168,6 +170,7 @@ def expected_io_contract(
         name,
         contract.chunk_size,
         contract.cache_len,
+        batch_size=contract.batch_size,
         cache_dtype=cache_dtype,
         compact_logits=contract.compact_logits,
         fuse_initial_pbd=contract.fuse_initial_pbd,
@@ -544,6 +547,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--jobs", type=int, default=16)
     parser.add_argument("--chunk-size", type=int, default=1024)
     parser.add_argument("--cache-len", type=int, default=4096)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--language-w-bits", type=int, choices=(4, 8), default=8)
     parser.add_argument("--lm-head-w-bits", type=int, choices=(4, 8), default=8)
     parser.add_argument("--compact-logits", action="store_true")
@@ -587,9 +591,12 @@ def main() -> int:
         or args.cache_len % 64
     ):
         raise RuntimeError("chunk/cache lengths must be multiples of 64 with cache > chunk")
+    if args.batch_size not in (1, 2):
+        raise RuntimeError("batch size must be 1 or 2")
     args.contract = LanguageContract(
         args.chunk_size,
         args.cache_len,
+        batch_size=args.batch_size,
         compact_logits=args.compact_logits,
         fuse_initial_pbd=args.fuse_initial_pbd,
     )
