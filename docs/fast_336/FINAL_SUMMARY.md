@@ -1,10 +1,10 @@
 # LocateAnything fast_336 最终汇总
 
-> 上一版基线汇总：本页结论截至 2026-08-15，不包含后续 fused Prefill、Compact Logits 和 KV Runtime 优化。当前优化状态见 `07_language_runtime_optimization.md`。
+> 本页保留 2026-08-15 的 350 帧 Profile 对比，并补充当前 fused Prefill、Compact Logits、KV Runtime 和 ROS 流水线验收。两组数据口径不同，不直接混合计算变化率。
 
 ## 状态
 
-fast_336 已完成 Float 验证、参数化、1200 条独立校准、Vision HBM、Language HBM、S600 Console/ROS 检测和 stable_672 对比验收，2026-08-15。
+fast_336 已完成 Float 验证、参数化、1200 条独立校准、Vision HBM、Language HBM、S600 Console/ROS 检测、stable_672 对比和当前 Runtime 优化验收。
 
 stable_672 全程保留，未覆盖其校准 Scale、BC、HBO、HBM、配置或板端工作树。
 
@@ -37,14 +37,14 @@ stable_672 全程保留，未覆盖其校准 Scale、BC、HBO、HBM、配置或�
 | Calibration | Vision 1200，Language 1200，1393 个 Replay 上下文，289 / 289 激活点有效 | `03_calibration.md` |
 | Vision Build | Source BC、Converted BC、4-Core HBO、HBM 全部通过 | `04_vision_build.md` |
 | Language Build | 13 Source BC、13 Converted BC、13 HBO、13 图 HBM ABI 全部通过 | `05_language_build.md` |
-| S600 | Console 单图、350 帧视频和 ROS 回灌检测全部通过 | `06_s600_comparison.md` |
+| S600 | Console 单图、350 帧视频、ROS 回灌和 30 FPS 流水线检测全部通过 | `06_s600_comparison.md` |
 
 ## 关键编译产物
 
 | 产物 | 大小（bytes） | SHA256 |
 | --- | ---: | --- |
 | Vision HBM | 491258184 | `0f476272b0442d2457e772a158697eb340484db0f4e43724cbe7a2100947a090` |
-| Language HBM | 3467789616 | `6ff906d7fd236530c42872b20055c3b7ea1b9abcf2ebe324eca07c9985bbec41` |
+| Language HBM (current fused fast_336) | 3467994368 | `ad4a861bd91f7de6c41f218afb3b095fc8e5456c8ce25f91cc034495706326e8` |
 | Embedding | 625381376 | `8668944fcb527faf3bbcd1c03a88d9da69f400b0700028f51ac6abe700e04011` |
 | Scale Manifest | - | `06968b05f1e2524fe90ebd081bc2165e7308a9619660fa9b92110d00b30ef1dd` |
 | Language HBM ABI Report | 13 / 13 passed | 见 `05_language_build.md` |
@@ -95,6 +95,19 @@ compiler/outputs/fast_336_prefill256_cache1024_w8/
 
 fast_336 HBM 与 Float 336 的逐帧框数误差为 17.13%，IoU 0.5 匹配率为 84.27%，匹配框平均 IoU 为 0.848。所有 350 帧均以 `im_end` 停止，无 Fallback、越界框、零面积框或 IoU 0.9 疑似重复框。
 
+## 当前 ROS 流水线验收
+
+当前 fast_336 Runtime 在 ROS 本地回灌中使用深度为 1 的 prepared 槽。下一帧的 Prompt/预处理/Vision 与当前帧 Language 重叠；同一帧的 Prefill、PBD/AR 和 KV 提交保持串行。模型 HBM、Tokenizer、图元数据、图 IO 和单路 Language KV 工作区只加载/分配一次并复用。
+
+| Prompt | 样本 | 正确性 | 输出 FPS | Preprocess | Vision | Language | Pipeline latency |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| `/detect bus` | 40 | 40/40，1 box，`im_end` | 8.084 | 8.756 ms | 55.780 ms | 123.524 ms | 247.210 ms |
+| `/detect person,bus,bicycle` | 40 | 40/40，5 boxes，`im_end` | 2.200 | 8.791 ms | 55.781 ms | 454.417 ms | 909.094 ms |
+
+单目标基线为 `6.942 FPS`，当前连续三次 40 帧结果为 `8.090`、`8.092` 和 `8.084 FPS`。100 帧资源窗口（不含模型加载）为：进程 CPU `57.0%`，RSS `174.1 MiB`，四核 BPU `79.4%`，DDR Read `78.8 GiB/s`，Write `0.86 GiB/s`，Read+Write `79.6 GiB/s`。DDR 使用同一 `hrut_ddr` 表的 `Bandwidth` 列，原始 MiB/s 除以 1024 转换。
+
+本轮实现了 Prompt/Token 缓存、固定尺寸插值系数缓存、Vision Patch 移交时去除一次 Host 拷贝、Language 输出工作区复用，以及 Prefill 零 KV 首次清零后复用。没有删除 q9/q12、改变量化精度或复制第二套 Language/KV。
+
 ## 检测路径
 
 | 路径 | 结果 |
@@ -112,6 +125,6 @@ fast_336 HBM 与 Float 336 的逐帧框数误差为 17.13%，IoU 0.5 匹配率�
 
 ## 最终结论
 
-fast_336 已完成代码、校准、编译和 S600 实机闭环。该 Profile 将 Vision Token 从 576 降至 144，将 Prefill 从 1024 降至 256，将 KV Cache 从 4096 降至 1024，在本次 350 帧检测视频上将平均总耗时降低 18.34%，同时保留可用的多人检测结果。
+fast_336 已完成代码、校准、编译和 S600 实机闭环。该 Profile 将 Vision Token 从 576 降至 144，将 Prefill 从 1024 降至 256，将 KV Cache 从 4096 降至 1024；350 帧顺序检测对比中平均总耗时降低 18.34%，当前 ROS 单目标回灌输出约 8.1 FPS，同时保留可用的多人检测结果。
 
 fast_336 作为检测优先的快速档交付；stable_672 继续作为稳定档，两者由配置和模型目录显式选择，不建立隐藏别名，不覆盖彼此产物。

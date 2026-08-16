@@ -1,6 +1,6 @@
 # Stage 7: fast_336 S600 对比验收
 
-> 历史基线记录：本页性能与资源数据来自上一版 fast_336 HBM，不代表当前 fused Prefill、Compact Logits 和 KV Runtime 路径的性能。新 HBM 完成后需使用相同检测输入重新验收。
+> 本页保留上一版 fast_336 与 stable_672 的 350 帧完整对比；文末补充当前 fused Prefill、Compact Logits、Device KV 和流水线 Runtime 的 30 FPS ROS 验收。两组数据口径不同，不直接混合计算变化率。
 
 ## 状态
 
@@ -266,8 +266,38 @@ ros2 launch hobot_locateanything hobot_locateanything.launch.py \
 3. fast_336 的 Decode 均值比 stable_672 高 7.19%，原因是该视频中 fast_336 生成的框和 Token 更多。Vision、Prefill 和总耗时仍显著降低。
 4. HBM fast_336 相对 Float 336 的逐帧框数误差为 17.13%，相对 stable_672 为 19.60%，未达到原 15% 数值线。该视频没有人工 Ground Truth，差异不能写成真实错误率；完整并排视频和固定帧复核未见结构性异常。
 
+## 当前 fused Runtime ROS 验收
+
+当前 Language HBM 大小为 `3,467,994,368` Byte，SHA256 为 `ad4a861bd91f7de6c41f218afb3b095fc8e5456c8ce25f91cc034495706326e8`。S600 安装目录为：
+
+```text
+/home/sunrise/LA_Test/hobot_locateanything_fast_336_checkout/install_fast_336_fused
+```
+
+使用 30 FPS 本地图片回灌和正式 ROS 共享内存路径，单目标与多目标均连续完成 40 帧：
+
+| Prompt | 结果 | Output FPS | Preprocess | Vision | Language | Pipeline latency |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `/detect bus` | 40/40，1 box，`im_end` | 8.084 | 8.756 ms | 55.780 ms | 123.524 ms | 247.210 ms |
+| `/detect person,bus,bicycle` | 40/40，5 boxes，`im_end` | 2.200 | 8.791 ms | 55.781 ms | 454.417 ms | 909.094 ms |
+
+单目标基线为 `6.942 FPS`，当前连续三次 40 帧测试为 `8.090`、`8.092` 和 `8.084 FPS`。流水线提高输出吞吐，但 prepared 深度为 1，因此 `Pipeline latency` 包含等待上一帧 Language 的时间，不能与旧串行单帧 `Total` 直接比较。
+
+100 帧稳态资源窗口不包含模型加载：
+
+| 指标 | 样本 | 均值 | 范围 |
+| --- | ---: | ---: | ---: |
+| Process CPU | 15 | 57.0% | 55%-59% |
+| RSS | 15 | 174.1 MiB | 174.06-174.19 MiB |
+| Four-core BPU | 56 | 79.4% | 66%-92% |
+| DDR Read `Bandwidth` | 3 | 78.8 GiB/s | 78.5-79.1 GiB/s |
+| DDR Write `Bandwidth` | 3 | 0.86 GiB/s | 0.82-0.88 GiB/s |
+| DDR Read+Write `Bandwidth` | 3 | 79.6 GiB/s | 79.4-79.9 GiB/s |
+
+监控开启期间的 100 帧实际吞吐为 `8.048 FPS`。首个未进入稳态的 BPU/DDR 样本已排除；Read、Write 和 Read+Write 均来自同一张 `hrut_ddr` 表的 `Bandwidth` 列，原始 MiB/s 除以 1024 转为 GiB/s。
+
 ## 结论
 
 fast_336 的 336 x 336 Vision、Prefill 256、KV Cache 1024、13 图 Language HBM、Console 视频检测和 ROS 2 检测路径均已在 S600 实机通过。350 帧检测中无越界框、重复框爆炸、Fallback 或生成到上限；相对 stable_672 的平均总耗时降低 18.34%，实际处理 FPS 提升 22.34%，RSS 平均降低约 19.7 MiB。
 
-fast_336 作为检测优先的快速 Profile 完成工程验收。其逐帧差异高于严格 15% 数值线，适用边界必须保留；stable_672 继续作为小目标、高分辨率和精度敏感任务的稳定 Profile。
+fast_336 作为检测优先的快速 Profile 完成工程验收。当前 fused Runtime 在不修改量化精度、不删除因果图调用的前提下，将单目标 ROS 回灌稳定提升到约 8.1 FPS。其逐帧差异高于严格 15% 数值线，适用边界必须保留；stable_672 继续作为小目标、高分辨率和精度敏感任务的稳定 Profile。
