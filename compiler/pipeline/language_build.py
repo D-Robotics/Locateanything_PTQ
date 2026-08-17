@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -396,11 +397,40 @@ def valid_hbo(path: Path) -> bool:
         return False
 
 
-def compile_stage(converted_bc: Path, destination: Path, name: str,
-                  core_num: int, args: argparse.Namespace) -> None:
+def _worker_base_command(args: argparse.Namespace) -> list[str]:
+    """Return the shared command line for an isolated compiler worker."""
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--bc_dir", str(args.bc_dir),
+        "--output_dir", str(args.output_dir),
+        "--march", args.march,
+        "--jobs", str(args.jobs),
+        "--chunk-size", str(args.chunk_size),
+        "--cache-len", str(args.cache_len),
+        "--batch-size", str(args.batch_size),
+        "--language-w-bits", str(args.language_w_bits),
+        "--lm-head-w-bits", str(args.lm_head_w_bits),
+    ]
+    if args.compact_logits:
+        command.append("--compact-logits")
+    if args.fuse_initial_pbd:
+        command.append("--fuse-initial-pbd")
+    if args.resume:
+        command.append("--resume")
+    return command
+
+
+def _compile_stage_in_process(
+    converted_bc: Path,
+    destination: Path,
+    name: str,
+    core_num: int,
+    args: argparse.Namespace,
+) -> None:
     """
     Function:
-        Compile one converted graph into an HBO artifact.
+        Compile one converted graph into an HBO artifact inside a worker.
 
     Args:
         converted_bc: Converted BC path.
@@ -441,6 +471,20 @@ def compile_stage(converted_bc: Path, destination: Path, name: str,
     os.replace(temporary, destination)
     Hbo(str(destination))
     print(f"[PASS] HBO {name} core={core_num}: {destination}", flush=True)
+
+
+def compile_stage(converted_bc: Path, destination: Path, name: str,
+                  core_num: int, args: argparse.Namespace) -> None:
+    """Compile one HBO in an isolated process to release HBDK memory."""
+    command = _worker_base_command(args)
+    command.extend([
+        "--hbo-worker",
+        "--worker-converted-bc", str(converted_bc),
+        "--worker-destination", str(destination),
+        "--worker-name", name,
+        "--worker-core-num", str(core_num),
+    ])
+    subprocess.run(command, check=True)
 
 
 def hbm_contract_matches(
@@ -491,9 +535,13 @@ def valid_hbm(
     return hbm_contract_matches(path, expected_names, contract)
 
 
-def link_variant(hbos: list[Path], destination: Path,
-                 resume: bool, expected_names: list[str],
-                 contract: LanguageContract) -> None:
+def _link_variant_in_process(
+    hbos: list[Path],
+    destination: Path,
+    resume: bool,
+    expected_names: list[str],
+    contract: LanguageContract,
+) -> None:
     """
     Function:
         Link all graph HBOs into one validated Language HBM.
@@ -521,6 +569,25 @@ def link_variant(hbos: list[Path], destination: Path,
     if not hbm_contract_matches(destination, expected_names, contract):
         raise RuntimeError(f"linked HBM graph contract mismatch: {destination}")
     print(f"[PASS] HBM: {destination}", flush=True)
+
+
+def link_variant(
+    hbos: list[Path],
+    destination: Path,
+    expected_names: list[str],
+    args: argparse.Namespace,
+) -> None:
+    """Link and validate the HBM in an isolated process."""
+    command = _worker_base_command(args)
+    command.extend([
+        "--link-worker",
+        "--worker-destination", str(destination),
+    ])
+    for path in hbos:
+        command.extend(["--worker-hbo", str(path)])
+    for name in expected_names:
+        command.extend(["--worker-expected-name", name])
+    subprocess.run(command, check=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -561,6 +628,25 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--embedding_path", type=Path)
     parser.add_argument("--expected_embedding_bytes", type=int)
+    parser.add_argument("--hbo-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--link-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--worker-converted-bc", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--worker-destination", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--worker-name", choices=LANGUAGE_GRAPHS, help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--worker-core-num", type=int, choices=(1, 2, 4), help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--worker-hbo", action="append", type=Path, help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--worker-expected-name",
+        action="append",
+        choices=LANGUAGE_GRAPHS,
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -600,6 +686,41 @@ def main() -> int:
         compact_logits=args.compact_logits,
         fuse_initial_pbd=args.fuse_initial_pbd,
     )
+    if args.hbo_worker and args.link_worker:
+        raise RuntimeError("compiler worker mode must be hbo or link")
+    if args.hbo_worker:
+        if not all((
+            args.worker_converted_bc,
+            args.worker_destination,
+            args.worker_name,
+            args.worker_core_num,
+        )):
+            raise RuntimeError("HBO worker arguments are incomplete")
+        _compile_stage_in_process(
+            args.worker_converted_bc.resolve(),
+            args.worker_destination.resolve(),
+            args.worker_name,
+            args.worker_core_num,
+            args,
+        )
+        return 0
+    if args.link_worker:
+        if not all((
+            args.worker_destination,
+            args.worker_hbo,
+            args.worker_expected_name,
+        )):
+            raise RuntimeError("link worker arguments are incomplete")
+        if len(args.worker_hbo) != len(args.worker_expected_name):
+            raise RuntimeError("link worker HBO/name counts differ")
+        _link_variant_in_process(
+            [path.resolve() for path in args.worker_hbo],
+            args.worker_destination.resolve(),
+            args.resume,
+            args.worker_expected_name,
+            args.contract,
+        )
+        return 0
     if args.hbm_path and len(args.ar_core_nums) != 1:
         raise RuntimeError("--hbm_path requires exactly one --ar_core_nums value")
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -707,9 +828,8 @@ def main() -> int:
             link_variant(
                 [all_hbos[name] for name in stage_order],
                 hbm,
-                args.resume,
                 stage_order,
-                args.contract,
+                args,
             )
 
     heading("ALL VARIANTS COMPLETED")
