@@ -8,6 +8,15 @@ fast_336 已完成 Float 验证、参数化、1200 条独立校准、Vision HBM�
 
 stable_672 全程保留，未覆盖其校准 Scale、BC、HBO、HBM、配置或板端工作树。
 
+## 最新实时 USB 验收
+
+2026-08-18 的正式检测口径已切换为 S600 `/dev/video0`、1280×720、30 FPS、336×336 `stretch`、`/detect box`、无 WebSocket。Batch 1 和 Batch 2 各采集 120 秒稳态窗口，完整阶段与资源时序图、CSV 和严格时间窗 FPS 计算见：
+
+- [Batch 1 实时 USB 记录](08_batch1_live_usb.md)
+- [Batch 2 实时 USB 记录](09_batch2_live_usb.md)
+
+严格时间窗输出为 Batch 1 `7.833 FPS`（940 结果）和 Batch 2 `11.400 FPS`（1368 结果），两轮均为 1 box、10 Token、3 次 PBD、`im_end`，推理错误为 0。该结果替代本页后续历史回灌数字作为当前实时吞吐口径；历史数据仍保留用于过程追溯。
+
 ## 最终参数
 
 | 参数 | fast_336 | stable_672 |
