@@ -1,7 +1,7 @@
 paths:
   checkpoint: ../models/LocateAnything-3B
   calibration_data: ../datasets/calibration/locateanything/source
-  output_dir: ../outputs/balanced_448_batch1_prefill384_cache2048_w8_fused_prefill_compact_logits
+  output_dir: ../outputs/balanced_448_batch1_stretch_prefill384_cache1024_w8_fused_prefill_compact_logits
 
 outputs:
   vision_hbm: LocateAnything-3B_vision.hbm
@@ -20,18 +20,18 @@ calibration:
 vision:
   image_width: 448
   image_height: 448
-  resize_mode: letterbox
+  resize_mode: stretch
   letterbox_fill: 128
 
 language:
   chunk_size: 384
-  cache_len: 2048
+  cache_len: 1024
   batch_size: 1
   compact_logits: true
   fuse_initial_pbd: true
 
 runtime:
-  max_new_tokens: 1536
+  max_new_tokens: 640
 
 quantization:
   vision_weight_bits: 8

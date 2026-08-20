@@ -9,11 +9,11 @@ inference:
 
   image_width: 448
   image_height: 448
-  resize_mode: letterbox
+  resize_mode: stretch
   letterbox_fill: 128
 
   generation_mode: hybrid
-  max_new_tokens: 1536
+  max_new_tokens: 640
   nms_iou: 0.9
 
   # S600 BPU L2 partition, applied before Vision and Language initialize.

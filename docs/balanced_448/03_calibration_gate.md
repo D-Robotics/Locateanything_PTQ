@@ -2,7 +2,7 @@
 
 ## 状态
 
-等待用户确认。尚未推送 `balanced_448` 分支，尚未创建远端 worktree、运行配置或输出目录，尚未启动 Prepare、Calibration、BC、HBO 或 HBM。
+用户已于 2026-08-20 授权端到端执行。旧 letterbox/cache2048 Prepare、Calibration 和部分 BC 仅保留审计，不用于最终 stretch/cache1024 Profile。
 
 ## 已核对环境
 
@@ -41,7 +41,7 @@
 ```text
 /home/kangjie.xu/oe_locateanything/balanced_448/Locateanything_PTQ/
   compiler/outputs/
-    balanced_448_batch1_prefill384_cache2048_w8_fused_prefill_compact_logits/
+    balanced_448_batch1_stretch_prefill384_cache1024_w8_fused_prefill_compact_logits/
 ```
 
 检查时远端 worktree 和输出目录均不存在。确认后先推送本地 `balanced_448` 分支，再从该分支创建远端独立 worktree。远端运行 YAML 为完整配置，只将 `checkpoint`、`calibration_data` 和 `output_dir` 改成以上显式绝对路径；保存配置 SHA256 和解析摘要后冻结，不在任务运行中切分支、pull、改配置或改输出目录。
@@ -76,10 +76,11 @@ vision_input=(1,1024,588)
 vision_output=(1,256,2048)
 visual_tokens=256
 chunk_size=384
-cache_len=2048
+cache_len=1024
 batch_size=1
-runtime.max_new_tokens=1536
+runtime.max_new_tokens=640
 calibration.max_new_tokens=1024
+resize_mode=stretch
 vision/language/lm_head weight bits=8/8/8
 language graph count=13
 compact_logits=true
@@ -103,11 +104,11 @@ fuse_initial_pbd=true
 4. Vision 动态量化路径允许 0 个静态 Observer，但必须完成 1200 次执行、输出有限且图覆盖通过，不能全局跳过审计。
 5. 输出完整 1200 样本 Scale Manifest、Graph Coverage、Scale Convergence 和 512 vs 1200 收敛报告。
 6. 记录 512 到 1200 的 Mean/P95/Max Drift 和超过 10% 的激活点数量；构建只能使用最终 1200 Scale。
-7. Scale Manifest 中必须包含完整 448 Vision Profile、Prefill 384、KV 2048、Batch 1、W8、fused Prefill 和 compact logits；任何 336/672 Profile 串用均失败。
+7. Scale Manifest 中必须包含完整 448 stretch Vision Profile、Prefill 384、KV 1024、Batch 1、W8、fused Prefill 和 compact logits；任何 letterbox、336/672 Profile 串用均失败。
 
-## 本 Gate 不授权的动作
+## 执行边界
 
-- 不构建 Source BC、Converted BC、HBO 或 HBM；
-- 不向 S600 复制模型或运行测试；
+- 仅在上一阶段完整验收后构建 Source BC、Converted BC、HBO 和 HBM；
+- 仅在 HBM ABI 与数值审计通过后向 S600 部署并运行测试；
 - 不修改、删除或覆盖 `fast_336`、`stable_672` 的配置、Scale、HBM 或运行目录；
 - 不把进程存活、文件存在或部分样本完成写成阶段成功。

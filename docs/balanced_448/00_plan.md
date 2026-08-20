@@ -15,20 +15,21 @@
 | Patch 数量 | 1024 |
 | Visual Token | 256 |
 | Vision 输入 / 输出 | `(1,1024,588)` / `(1,256,2048)` |
+| Resize | stretch |
 | Prefill | 384 |
 | 文本位置容量 | 128 |
-| KV Cache | 2048 |
-| Runtime max new tokens | 1536 |
+| KV Cache | 1024 |
+| Runtime max new tokens | 640 |
 | Calibration max new tokens | 1024 |
 | PBD / AR | q6 / q1 |
 | 量化 | W8A8，独立 1200 条 Scale |
 
-`384 + 1536 = 1920 <= 2048`，因此运行时生成上限不超过 KV Cache 契约，并保留 128 个 KV 位置余量。`448 / 14 = 32`，经 `2 x 2` Patch Merge 后得到 `16 x 16 = 256` 个 Visual Token。已有 Float 筛查中最长非视觉 Prompt 为 70 个 Token，Prefill 384 可容纳 256 个 Visual Token 和该文本 Prompt，并留出 58 个位置。
+`384 + 640 = 1024`，因此运行时生成上限不超过 KV Cache 契约。`448 / 14 = 32`，经 `2 x 2` Patch Merge 后得到 `16 x 16 = 256` 个 Visual Token。已有 Float 筛查中最长非视觉 Prompt 为 70 个 Token，Prefill 384 可容纳 256 个 Visual Token 和该文本 Prompt，并留出 58 个位置。校准标准答案完整保存，不按运行时 KV 容量截断。
 
 ## 隔离路径
 
 - 编译配置：`compiler/config/balanced_448.yaml`
-- 编译输出：`compiler/outputs/balanced_448_batch1_prefill384_cache2048_w8_fused_prefill_compact_logits/`
+- 编译输出：`compiler/outputs/balanced_448_batch1_stretch_prefill384_cache1024_w8_fused_prefill_compact_logits/`
 - 板端模型：`inference/models/balanced_448/`
 - 板端输出：`inference/outputs/balanced_448/`
 - 阶段记录：`docs/balanced_448/`
@@ -39,12 +40,12 @@
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| 1 | 配置、形状、Batch 1、路径隔离和 dry-run | 进行中 |
-| 2 | 448 Float 精度对照 | 已有固定样本筛查证据，见 `02_float_accuracy.md` |
-| 3 | 1200 条 Prepare、校准、激活统计与收敛审计 | 未开始；启动前单独确认 |
-| 4 | Vision Float -> Eager -> BC -> Converted BC -> HBO -> HBM | 未开始；启动前单独确认 |
-| 5 | Language Float -> Eager -> BC -> Converted BC -> HBO -> HBM | 未开始；启动前单独确认 |
-| 6 | S600 ABI、数值、任务精度、时延与资源验收 | 未开始；部署前单独确认 |
+| 1 | stretch、KV 1024、形状、Batch 1、路径隔离和 dry-run | 进行中 |
+| 2 | 448 Float 精度对照 | 旧 letterbox 筛查仅作历史参考；stretch 结果重新验证 |
+| 3 | 1200 条 Prepare、校准、激活统计与收敛审计 | 已授权，重新执行 |
+| 4 | Vision Float -> Eager -> BC -> Converted BC -> HBO -> HBM | 已授权，校准通过后执行 |
+| 5 | Language Float -> Eager -> BC -> Converted BC -> HBO -> HBM | 已授权，校准通过后执行 |
+| 6 | S600 ABI、数值、任务精度、时延与资源验收 | 已授权，HBM 审计通过后执行 |
 
 ## 精度验收原则
 
@@ -63,4 +64,4 @@
 - 激活统计无未执行点、非有限值、非法 Norm 或零 Absmax；动态量化 Vision 按组件契约审计。
 - 使用完整 1200 样本最终 Scale，不用检查点 Scale 替代。
 
-每个长时阶段开始前必须再次列出输入、输出、命令、预计耗时和验收条件，并获得确认。
+本目标已于 2026-08-20 获得端到端执行授权。配置或输入发生漂移时必须停止，不得静默继续。

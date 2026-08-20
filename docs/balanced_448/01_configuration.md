@@ -2,14 +2,15 @@
 
 ## 状态
 
-配置已新增，本地语法、配置、形状、隔离路径和四条 dry-run 验证通过。本阶段未生成校准张量、激活 Scale、BC、HBO 或 HBM。
+配置已修正为 stretch、KV 1024。本阶段必须重新执行本地语法、配置、形状、隔离路径和四条 dry-run；旧 letterbox 校准与 BC 不属于最终 Profile。
 
 ## 配置决策
 
 - `448 x 448` 由现有通用 Vision Profile 推导，不新增分辨率白名单或硬编码形状。
 - `chunk_size=384` 为 256 个 Visual Token 保留 128 个文本位置；已有固定样本最长非视觉 Prompt 为 70 个 Token。
-- `cache_len=2048` 与 `runtime.max_new_tokens=1536` 满足 `chunk + generation <= cache`，并保留 128 个 KV 位置余量。
+- `cache_len=1024` 与 `runtime.max_new_tokens=640` 满足 `chunk + generation <= cache`。
 - `batch_size=1` 显式写入配置，避免依赖默认值。
+- `resize_mode=stretch`，校准和运行时均直接缩放到 `448 x 448`，不添加 Letterbox Padding。
 - 保留当前 W8A8、fused Prefill、compact logits、PBD q6 和 AR q1 契约。
 - `calibration.max_new_tokens=1024` 只控制离线 Float 生成，不复用 336 的激活 Scale。
 
@@ -46,9 +47,9 @@ vision_input=(1,1024,588)
 vision_output=(1,256,2048)
 visual_tokens=256
 chunk_size=384
-cache_len=2048
+cache_len=1024
 batch_size=1
-runtime.max_new_tokens=1536
+runtime.max_new_tokens=640
 ```
 
 实际解析值与上述契约一致：
@@ -75,9 +76,9 @@ fuse_initial_pbd=true
 | Prepare dry-run | 通过，未执行子进程 |
 | Calibration dry-run | 通过，`max_samples=2`，未执行子进程 |
 | Vision BC dry-run | 通过，Batch 1、448 ABI 和独立 Scale 路径已传递 |
-| Language BC dry-run | 通过，Prefill 512、KV 2048、Batch 1、13 图已传递 |
+| Language BC dry-run | 待重跑，Prefill 384、KV 1024、Batch 1、13 图 |
 | 输出目录隔离 | 通过，未指向 336/672 目录 |
-| KV 越界拒绝 | 通过，`384 + 1665 > 2048` 在调度前失败 |
+| KV 越界拒绝 | 待重跑，`384 + 641 > 1024` 应在调度前失败 |
 | 336 Scale Profile 串用拒绝 | 通过，报告 336/448 的 Grid、Patch、输入输出和 Visual Token 漂移 |
 | `git diff --check` | 通过 |
 
