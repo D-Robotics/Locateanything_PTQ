@@ -1,0 +1,49 @@
+paths:
+  checkpoint: ../models/LocateAnything-3B
+  calibration_data: ../datasets/calibration/locateanything/source
+  output_dir: ../outputs/balanced_448_batch1_prefill384_cache2048_w8_fused_prefill_compact_logits
+
+outputs:
+  vision_hbm: LocateAnything-3B_vision.hbm
+  language_hbm: LocateAnything-3B_language.hbm
+  embedding_bin: LocateAnything-3B_embed_tokens.bin
+
+calibration:
+  slow_samples: 128
+  # Offline Float generation cap. Runtime generation is independently capped below.
+  max_new_tokens: 1024
+  seed: 20260729
+  prepare_dtype: bfloat16
+  statistics_dtype: float16
+  detailed_statistics: false
+
+vision:
+  image_width: 448
+  image_height: 448
+  resize_mode: letterbox
+  letterbox_fill: 128
+
+language:
+  chunk_size: 384
+  cache_len: 2048
+  batch_size: 1
+  compact_logits: true
+  fuse_initial_pbd: true
+
+runtime:
+  max_new_tokens: 1536
+
+quantization:
+  vision_weight_bits: 8
+  language_weight_bits: 8
+  lm_head_weight_bits: 8
+
+build:
+  march: nash-p
+  device: cuda:0
+  jobs: 16
+  cores:
+    vision: 4
+    prefill: 4
+    pbd: 4
+    ar: 4
